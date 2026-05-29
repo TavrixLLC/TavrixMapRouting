@@ -1,11 +1,11 @@
 # Build artifacts
-/builds/
+/builds/*
 !/builds/.gitkeep
 /world/builds/*
 !/world/builds/.gitkeep
 
 # Active runtime state
-/active/current/
+/active/current/*
 /world/active/current/*
 !/world/active/current/.gitkeep
 
