@@ -1,1 +1,0 @@
-{"sources_to_targets":[[{"from_index":0,"to_index":0,"time":112,"distance":1.266,"begin_heading":31.6,"end_heading":253.1,"begin_lat":26.223496,"begin_lon":50.587575,"end_lat":26.228459,"end_lon":50.586013}]],"sources":[{"lat":26.223496,"lon":50.587575}],"targets":[{"lat":26.228459,"lon":50.586013}],"units":"kilometers","algorithm":"costmatrix"}

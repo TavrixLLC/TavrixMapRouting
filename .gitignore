@@ -1,0 +1,20 @@
+# Build artifacts
+/builds/
+!/builds/.gitkeep
+/world/builds/*
+!/world/builds/.gitkeep
+
+# Active runtime state
+/active/current/
+/world/active/current/*
+!/world/active/current/.gitkeep
+
+# Data files
+/data/*.osm.pbf
+/world/data/*.osm.pbf
+
+# Dependencies
+/routing-api/node_modules/
+
+# Lock files
+/.locks/
