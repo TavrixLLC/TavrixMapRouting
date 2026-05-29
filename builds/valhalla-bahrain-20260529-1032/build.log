@@ -1,0 +1,42 @@
+Unable to find image 'ghcr.io/valhalla/valhalla:latest' locally
+latest: Pulling from valhalla/valhalla
+87e96e73ea98: Pulling fs layer
+09225103dac2: Pulling fs layer
+1efffbd8c50c: Pulling fs layer
+8008c9232106: Pulling fs layer
+4f4fb700ef54: Pulling fs layer
+4f4fb700ef54: Already exists
+1efffbd8c50c: Download complete
+8008c9232106: Download complete
+87e96e73ea98: Download complete
+09225103dac2: Download complete
+09225103dac2: Pull complete
+87e96e73ea98: Pull complete
+4f4fb700ef54: Pull complete
+1efffbd8c50c: Pull complete
+8008c9232106: Pull complete
+Digest: sha256:9be343fa46d9f94e0ecd7017416b550f4b7577b11f4034c9f10ae58e87d76bbd
+Status: Downloaded newer image for ghcr.io/valhalla/valhalla:latest
+Configuration is required
+
+valhalla_build_tiles 3.7.0-317e6cc35
+
+a program that creates the route graph
+from one or multiple osm.pbf extract(s)
+
+Usage:
+  valhalla_build_tiles [OPTION...] OSM PBF file(s)
+
+  -h, --help               Print this help message.
+  -v, --version            Print the version of this software.
+  -c, --config arg         Path to the configuration file
+  -i, --inline-config arg  Inline JSON config
+  -s, --start arg          Starting stage of the build pipeline (default: 
+                           initialize)
+  -e, --end arg            End stage of the build pipeline (default: 
+                           cleanup)
+  -j, --concurrency arg    Number of threads to use. Defaults to all 
+                           threads.
+
+
+

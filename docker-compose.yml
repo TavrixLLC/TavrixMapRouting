@@ -1,0 +1,62 @@
+services:
+  valhalla:
+    image: ghcr.io/valhalla/valhalla:latest
+    container_name: valhalla
+    restart: unless-stopped
+    command: ["sh", "-c", "valhalla_service \"$(cat /valhalla/config/valhalla.json)\" 1"]
+    ports:
+      - "${VALHALLA_PORT:-8002}:8002"
+    volumes:
+      - ./config:/valhalla/config:ro
+      - ./active/current:/valhalla/build:ro
+    healthcheck:
+      test: ["CMD-SHELL", "valhalla_service \"$$(cat /valhalla/config/valhalla.json)\" status '{}' >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  valhalla-world:
+    image: ghcr.io/valhalla/valhalla:latest
+    container_name: valhalla_world
+    profiles: ["world"]
+    restart: unless-stopped
+    command: ["sh", "-c", "valhalla_service \"$(cat /valhalla/config/valhalla.json)\" 1"]
+    ports:
+      - "${VALHALLA_WORLD_PORT:-8003}:8002"
+    volumes:
+      - ./world/config:/valhalla/config:ro
+      - ./world/active/current:/valhalla/build:ro
+    healthcheck:
+      test: ["CMD-SHELL", "valhalla_service \"$$(cat /valhalla/config/valhalla.json)\" status '{}' >/dev/null"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+
+  routing-api:
+    build:
+      context: ./routing-api
+    container_name: routing_api
+    restart: unless-stopped
+    environment:
+      VALHALLA_INTERNAL_URL: ${VALHALLA_INTERNAL_URL:-http://valhalla:8002}
+      VALHALLA_REGIONAL_URL: ${VALHALLA_REGIONAL_URL:-http://valhalla:8002}
+      VALHALLA_WORLD_URL: ${VALHALLA_WORLD_URL:-}
+      VALHALLA_REGIONAL_BOUNDS: ${VALHALLA_REGIONAL_BOUNDS:-50.2,25.5,51.0,26.6}
+      VALHALLA_IMPORTANT_AREAS: ${VALHALLA_IMPORTANT_AREAS:-bahrain|Bahrain|50.2,25.5,51.0,26.6}
+      VALHALLA_AUTO_FALLBACK: ${VALHALLA_AUTO_FALLBACK:-true}
+      VALHALLA_TIMEOUT_MS: ${VALHALLA_TIMEOUT_MS:-10000}
+      VALHALLA_INCLUDE_RAW: ${VALHALLA_INCLUDE_RAW:-false}
+      VALHALLA_REGION: ${VALHALLA_REGION:-bahrain}
+      VALHALLA_ACTIVE_METADATA_PATH: /valhalla/active/current/metadata.json
+      VALHALLA_WORLD_METADATA_PATH: /valhalla/world/active/current/metadata.json
+      ROUTING_API_PORT: ${ROUTING_API_PORT:-3000}
+    ports:
+      - "${ROUTING_API_PORT:-3000}:3000"
+    volumes:
+      - ./active/current:/valhalla/active/current:ro
+      - ./world/active/current:/valhalla/world/active/current:ro
+    depends_on:
+      valhalla:
+        condition: service_started

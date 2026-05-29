@@ -1,0 +1,8 @@
+{
+  "region": "bahrain",
+  "build_id": "valhalla-bahrain-20260529-1032",
+  "pbf_file": "bahrain-latest.osm.pbf",
+  "created_at": "2026-05-29T10:32:27Z",
+  "status": "failed",
+  "failed_at": "2026-05-29T10:33:02Z"
+}
