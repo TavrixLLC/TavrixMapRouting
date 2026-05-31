@@ -128,6 +128,59 @@ Only configure areas covered by the active regional graph.
 
 ## Tests
 
+Swagger UI:
+
+```text
+http://localhost:3000/api/routing/docs
+```
+
+OpenAPI JSON:
+
+```text
+http://localhost:3000/api/routing/openapi.json
+```
+
+Mapbox-like directions:
+
+```bash
+curl "http://localhost:3000/api/routing/directions/auto/50.5876,26.2235;50.5860,26.2285?units=kilometers&steps=true&area=bahrain"
+```
+
+Additional internal routing endpoints:
+
+```text
+POST /api/routing/snap
+POST /api/routing/nearest
+POST /api/routing/distance
+POST /api/routing/optimization
+GET  /api/routing/health/live
+GET  /api/routing/health/ready
+GET  /api/routing/health/dependencies
+```
+
+Build operations are internal-only and should be protected in production:
+
+```env
+ROUTING_INTERNAL_TOKEN=change-me
+```
+
+Without `ROUTING_INTERNAL_TOKEN`, build endpoints return `503 internal_token_missing` instead of being public.
+
+Metrics:
+
+```text
+http://localhost:3000/metrics
+```
+
+Raw upstream responses are off by default:
+
+```env
+ROUTING_INCLUDE_RAW=false
+ROUTING_ALLOW_REQUEST_RAW=false
+```
+
+The OpenAPI contract includes reusable `Geometry`, `Maneuver`, `Bounds`, and `DependencyStatus` schemas. Build endpoints always require an internal token and fail closed when `ROUTING_INTERNAL_TOKEN` is missing.
+
 ```bash
 curl http://localhost:3000/api/routing/health
 ```
