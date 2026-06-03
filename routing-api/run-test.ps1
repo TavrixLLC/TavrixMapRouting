@@ -1,0 +1,10 @@
+$env:GEOCODER_BASE_URL="http://localhost:4000"
+$env:ROUTING_BASE_URL="http://localhost:8080"
+$env:GEOCODER_QUERY_TEXT="مطعم"
+$env:GEOCODER_FOCUS_LAT="33.3152"
+$env:GEOCODER_FOCUS_LON="44.3661"
+$env:EXPECTED_COUNTRY="IQ"
+$env:ALLOW_CENTER_FALLBACK="false"
+$env:ROUTING_QUALITY_MATRIX_PATH="config/routing-quality-matrix.iraq.json"
+$env:ROUTING_REGION_PATH="config/regions/iraq.json"
+node scripts/geocoder-routing-fixture.mjs

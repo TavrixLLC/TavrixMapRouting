@@ -1,216 +1,84 @@
-# Valhalla Routing Subsystem
+# TavrixMap Routing
 
-This folder contains the complete Valhalla routing subsystem for the Bahrain/regional graph, plus an optional world graph slot.
+This repository owns routing only. It runs a Bahrain-focused Valhalla graph behind a normalized API and an Nginx public boundary. It does not change geocoding, POI search, map rendering, PMTiles, or application data.
 
-Valhalla is used only for routing, ETA, matrix, isochrones, and future map matching. It does not render maps, generate PMTiles, geocode text, search POIs, read realtime business data, or read from PostGIS directly.
-
-## Structure
+## Architecture
 
 ```text
-valhalla/
-|-- data/
-|   `-- bahrain-latest.osm.pbf
-|-- config/
-|   `-- valhalla.json
-|-- builds/
-|   `-- valhalla-bahrain-YYYYMMDD-HHMM/
-|-- active/
-|   `-- current/
-|-- scripts/
-|   |-- build-valhalla.sh
-|   |-- validate-valhalla.sh
-|   |-- switch-active-valhalla.sh
-|   |-- update-valhalla.sh
-|   `-- prune-old-valhalla-builds.sh
-|-- routing-api/
-|-- frontend/
-|-- world/
-|   |-- data/
-|   |-- config/
-|   |-- builds/
-|   `-- active/
-|-- docker-compose.yml
-`-- README.md
+public :8080 -> nginx -> routing-api -> valhalla-blue or valhalla-green
+                                |
+                                +-> optional world Valhalla URL
+
+updater profile -> download PBF -> build -> validate
+host activation -> stop inactive service -> stage -> health probe -> atomic active_version.json
 ```
 
-## Workflow
+Only Nginx publishes a routing port. Grafana is optional and loopback-only. Valhalla, the API, Prometheus, docs, metrics, and build operations stay on Docker networks.
 
-```text
-bahrain-latest.osm.pbf
-  -> versioned Valhalla graph build
-  -> validation
-  -> active switch
-  -> Valhalla service
-  -> backend routing API
-  -> frontend route display
-```
+## First Deployment
 
-## Commands
-
-Run from Git Bash or WSL on Windows.
+Copy `.env.example` to `.env`. Create the Grafana password file only if you enable observability:
 
 ```bash
-cd valhalla
-chmod +x scripts/*.sh
-./scripts/build-valhalla.sh
-./scripts/validate-valhalla.sh
-./scripts/switch-active-valhalla.sh "$(cat .last_validated_build_id)"
-docker compose up -d --build valhalla routing-api
+mkdir -p secrets
+printf '%s\n' 'replace-with-a-long-random-password' > secrets/grafana_admin_password.txt
 ```
 
-Full update flow:
+Build the service images and run the graph pipeline:
 
 ```bash
-cd valhalla
-./scripts/update-valhalla.sh
+docker compose build routing-api routing-updater
+docker compose --profile updater run --rm routing-updater /opt/tavrix/scripts/update-pipeline.sh --build-only
+./scripts/activate-bluegreen.ps1 -Color green -BuildId (Get-Content active/.last_validated_build_id -Raw).Trim()
+./scripts/start-routing-runtime.ps1
 ```
 
-If you import or replace the root OSM file here:
+The updater image contains Valhalla build tools, Bash, `curl`, `jq`, and `osmium`. It does not mount `/var/run/docker.sock`. Activation intentionally runs on the host because it recreates the inactive Valhalla service after validation.
 
-```text
-osm/bahrain-latest.osm.pbf
-```
+Activation defaults to `VALHALLA_ACTIVE_REPLICAS=3` and `VALHALLA_STANDBY_REPLICAS=1`. Three active Valhalla replicas with `VALHALLA_SERVICE_CONCURRENCY=2`, a 250 RPS standard route/snap limit, and a 1.0 CPU reverse proxy budget are required for the current Bahrain host to pass the strict 100 rps route latency gate.
 
-the update script will automatically copy it into:
-
-```text
-valhalla/data/bahrain-latest.osm.pbf
-```
-
-before building the new routing graph. You can also run only the import step:
+## Verification
 
 ```bash
-cd valhalla
-./scripts/import-osm-valhalla.sh
+curl -fsS http://localhost:8080/health/live
+curl -fsS http://localhost:8080/health/ready
+cd routing-api
+npm test
+npm run test:scripts
+npm run test:routing-quality-matrix
+npm run test:route-quality-gate
 ```
 
-Rollback:
+`/health/ready` fails closed until an active manifest, graph files, Valhalla status, a real locate result, and a real route probe all pass.
+
+Manual Windows PowerShell route and snap examples are in `docs/manual-routing-checks.md`.
+
+## Operations
 
 ```bash
-cd valhalla
-./scripts/switch-active-valhalla.sh valhalla-bahrain-previous-build-id
+# Download/build/validate a candidate
+docker compose --profile updater run --rm routing-updater /opt/tavrix/scripts/update-pipeline.sh --build-only
+
+# Stage, verify, and activate the build on the inactive service
+./scripts/activate-bluegreen.ps1 -Color auto -BuildId (Get-Content active/.last_validated_build_id -Raw).Trim()
+
+# Refresh API/proxy while preserving active/standby Valhalla replica counts
+./scripts/start-routing-runtime.ps1
+
+# Roll back to the retained previous slot
+./scripts/rollback-bluegreen.ps1
+
+# Optional monitoring
+docker compose --profile observability up -d prometheus grafana
 ```
 
-Optional world graph:
+The public API is available at `http://localhost:8080/api/routing/...`. OpenAPI, Swagger UI, Prometheus metrics, dependency details, and build endpoints remain internal by design.
 
-```text
-valhalla/world/
-```
+## Runbooks
 
-The world graph is disabled by default because planet builds are expensive. After you build and activate a planet graph under `world/active/current`, start the optional service with:
-
-```bash
-cd valhalla
-VALHALLA_WORLD_URL=http://valhalla-world:8002 docker compose --profile world up -d --build
-```
-
-The routing API chooses automatically:
-
-```text
-inside regional bounds -> regional Valhalla
-outside regional bounds -> world Valhalla if configured
-outside regional bounds and world unavailable -> clear 503 error
-```
-
-Important areas are configurable through:
-
-```env
-VALHALLA_IMPORTANT_AREAS=bahrain|Bahrain|50.2,25.5,51.0,26.6
-```
-
-For multiple areas:
-
-```env
-VALHALLA_IMPORTANT_AREAS=bahrain|Bahrain|50.2,25.5,51.0,26.6;gcc|GCC|34.0,12.0,60.0,32.5
-```
-
-Only configure areas covered by the active regional graph.
-
-## Tests
-
-Swagger UI:
-
-```text
-http://localhost:3000/api/routing/docs
-```
-
-OpenAPI JSON:
-
-```text
-http://localhost:3000/api/routing/openapi.json
-```
-
-Mapbox-like directions:
-
-```bash
-curl "http://localhost:3000/api/routing/directions/auto/50.5876,26.2235;50.5860,26.2285?units=kilometers&steps=true&area=bahrain"
-```
-
-Additional internal routing endpoints:
-
-```text
-POST /api/routing/snap
-POST /api/routing/nearest
-POST /api/routing/distance
-POST /api/routing/optimization
-GET  /api/routing/health/live
-GET  /api/routing/health/ready
-GET  /api/routing/health/dependencies
-```
-
-Build operations are internal-only and should be protected in production:
-
-```env
-ROUTING_INTERNAL_TOKEN=change-me
-```
-
-Without `ROUTING_INTERNAL_TOKEN`, build endpoints return `503 internal_token_missing` instead of being public.
-
-Metrics:
-
-```text
-http://localhost:3000/metrics
-```
-
-Raw upstream responses are off by default:
-
-```env
-ROUTING_INCLUDE_RAW=false
-ROUTING_ALLOW_REQUEST_RAW=false
-```
-
-The OpenAPI contract includes reusable `Geometry`, `Maneuver`, `Bounds`, and `DependencyStatus` schemas. Build endpoints always require an internal token and fail closed when `ROUTING_INTERNAL_TOKEN` is missing.
-
-```bash
-curl http://localhost:3000/api/routing/health
-```
-
-```bash
-curl -X POST http://localhost:3000/api/routing/route \
-  -H "Content-Type: application/json" \
-  -d '{
-    "locations": [
-      { "lat": 26.2235, "lon": 50.5876 },
-      { "lat": 26.2285, "lon": 50.5860 }
-    ],
-    "costing": "auto",
-    "units": "kilometers"
-  }'
-```
-
-PowerShell request:
-
-```powershell
-$body = @{
-  locations = @(
-    @{ lat = 26.2235; lon = 50.5876 },
-    @{ lat = 26.2285; lon = 50.5860 }
-  )
-  costing = "auto"
-  units = "kilometers"
-} | ConvertTo-Json -Depth 5
-
-Invoke-RestMethod -Uri "http://localhost:3000/api/routing/route" -Method Post -ContentType "application/json" -Body $body
-```
-
-See `../docs/valhalla.md` for the detailed operational guide.
+- [Deployment and rollback](docs/deployment.md)
+- [Monitoring and alerts](docs/monitoring.md)
+- [Security boundary](docs/security.md)
+- [Quality gates](docs/quality-gates.md)
+- [Known blockers](docs/known-blockers.md)
+- [Iraq routing profile](docs/iraq-routing-profile.md)

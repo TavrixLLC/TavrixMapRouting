@@ -34,6 +34,26 @@ function request(server, method, path, body, headers = {}) {
   });
 }
 
+function rawRequest(server, method, path, payload, headers = {}) {
+  const address = server.address();
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: address.port,
+      path,
+      method,
+      headers: { 'content-length': Buffer.byteLength(payload), ...headers }
+    }, (res) => {
+      let text = '';
+      res.on('data', (chunk) => { text += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: text ? JSON.parse(text) : null }));
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 function mockFetch(handler) {
   const previous = globalThis.fetch;
   globalThis.fetch = async (url, options = {}) => handler(String(url), options);
@@ -115,6 +135,33 @@ test('geometry can be returned as GeoJSON LineString', async () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.geometry.type, 'LineString');
     assert.ok(Array.isArray(res.body.geometry.coordinates));
+  });
+  restore();
+});
+
+test('multi-leg geometry includes every leg and steps use each leg shape', async () => {
+  const multiLegPayload = {
+    trip: {
+      units: 'kilometers',
+      summary: { length: 2.4, time: 240 },
+      legs: [
+        { shape: 'qwp_q@ozrn_BeBaA', summary: { length: 1.2, time: 120 }, maneuvers: [{ instruction: 'Head north', type: 1, begin_shape_index: 0 }] },
+        { shape: 'qwp_q@ozrn_BeBaA', summary: { length: 1.2, time: 120 }, maneuvers: [{ instruction: 'Continue', type: 6, begin_shape_index: 0 }] }
+      ]
+    }
+  };
+  const restore = mockFetch(() => jsonResponse(multiLegPayload));
+  await withServer(async (server) => {
+    const res = await request(server, 'POST', '/api/routing/route', {
+      locations: [{ lat: 26.2235, lon: 50.5876 }, { lat: 26.2285, lon: 50.5860 }, { lat: 26.229, lon: 50.588 }],
+      area: 'bahrain',
+      shape_format: 'geojson',
+      steps: true
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.geometry.coordinates.length > 2);
+    assert.equal(res.body.routes[0].legs.length, 2);
+    assert.ok(Array.isArray(res.body.routes[0].legs[1].steps[0].maneuver.location));
   });
   restore();
 });
@@ -209,6 +256,22 @@ test('dependency health returns DependencyStatus shape', async () => {
   restore();
 });
 
+test('readiness fails closed when active graph artifacts are missing', async () => {
+  const restore = mockFetch((url) => {
+    if (url.endsWith('/locate')) return jsonResponse([{ edges: [{ graph_id: 'edge-1', correlated_lat: 26.2235, correlated_lon: 50.5876 }] }]);
+    if (url.endsWith('/route')) return jsonResponse(routePayload);
+    return jsonResponse({ ok: true });
+  });
+  await withServer(async (server) => {
+    const res = await request(server, 'GET', '/api/routing/health/ready');
+    assert.equal(res.status, 503);
+    assert.equal(res.body.status, 'not_ready');
+    assert.equal(res.body.checks.active_version_exists, false);
+    assert.equal(res.body.checks.graph_tiles_exist, false);
+  });
+  restore();
+});
+
 test('POST route maps truck options and alternatives', async () => {
   let upstreamBody = null;
   const restore = mockFetch((_url, options) => {
@@ -238,6 +301,15 @@ test('invalid coordinate returns consistent error', async () => {
     });
     assert.equal(res.status, 400);
     assert.equal(res.body.error.code, 'invalid_coordinate');
+  });
+});
+
+test('malformed JSON returns API error envelope', async () => {
+  await withServer(async (server) => {
+    const res = await rawRequest(server, 'POST', '/api/routing/route', '{locations:[bad]}', { 'content-type': 'application/json' });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'invalid_json');
+    assert.match(res.body.error.request_id, /^[0-9a-f-]{36}$/);
   });
 });
 
@@ -367,6 +439,77 @@ test('snap radius limit is enforced', async () => {
   });
 });
 
+test('snap does not report fake success when locate returns no edge', async () => {
+  const restore = mockFetch(() => jsonResponse([{ input_lat: 26.2235, input_lon: 50.5876, edges: [], nodes: [] }]));
+  await withServer(async (server) => {
+    const res = await request(server, 'POST', '/api/routing/snap', {
+      locations: [{ lat: 26.2235, lon: 50.5876 }],
+      area: 'bahrain'
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.results[0].matched, false);
+    assert.equal(res.body.results[0].snapped, null);
+    assert.equal(res.body.results[0].distance_meters, null);
+    assert.equal(res.body.results[0].reason, 'no_edge_found');
+  });
+  restore();
+});
+
+test('snap reports a real matched edge and graph metadata', async () => {
+  const restore = mockFetch(() => jsonResponse([{ edges: [{ graph_id: 'edge-1', correlated_lat: 26.2236, correlated_lon: 50.5877, distance: 12, names: ['Road 1'] }] }]));
+  await withServer(async (server) => {
+    const res = await request(server, 'POST', '/api/routing/snap', {
+      locations: [{ lat: 26.2235, lon: 50.5876 }],
+      area: 'bahrain'
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.results[0].matched, true);
+    assert.equal(res.body.results[0].edge_id, 'edge-1');
+    assert.equal(res.body.results[0].distance_meters, 12);
+    assert.deepEqual(res.body.results[0].snapped, { lat: 26.2236, lon: 50.5877 });
+    assert.ok('graph_version' in res.body.results[0]);
+  });
+  restore();
+});
+
+test('snap accepts PowerShell-friendly lat lon radius_meters shorthand', async () => {
+  const restore = mockFetch((_url, init) => {
+    const body = JSON.parse(init.body);
+    assert.deepEqual(body.locations, [{ lat: 26.2235, lon: 50.5876 }]);
+    assert.equal(body.radius, 100);
+    return jsonResponse([{ edges: [{ graph_id: 'edge-1', correlated_lat: 26.2236, correlated_lon: 50.5877, distance: 12, names: ['Road 1'] }] }]);
+  });
+  await withServer(async (server) => {
+    const res = await request(server, 'POST', '/api/routing/snap', {
+      lat: 26.2235,
+      lon: 50.5876,
+      radius_meters: 100,
+      area: 'bahrain'
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.results[0].matched, true);
+    assert.deepEqual(res.body.results[0].snapped, { lat: 26.2236, lon: 50.5877 });
+  });
+  restore();
+});
+
+test('snap rejects a nearest edge outside the requested radius', async () => {
+  const restore = mockFetch(() => jsonResponse([{ edges: [{ correlated_lat: 25.559978, correlated_lon: 50.266835, distance: 2023 }] }]));
+  await withServer(async (server) => {
+    const res = await request(server, 'POST', '/api/routing/snap', {
+      locations: [{ lat: 25.55, lon: 50.25 }],
+      radius: 50,
+      area: 'bahrain'
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.results[0].matched, false);
+    assert.equal(res.body.results[0].snapped, null);
+    assert.equal(res.body.results[0].distance_meters, null);
+    assert.equal(res.body.results[0].reason, 'outside_radius');
+  });
+  restore();
+});
+
 test('map-match max points is enforced', async () => {
   await withServer(async (server) => {
     const shape = [
@@ -381,7 +524,9 @@ test('map-match max points is enforced', async () => {
 });
 
 test('map-match rejects empty body and accepts shape or locations', async () => {
-  const restore = mockFetch(() => jsonResponse(routePayload));
+  const restore = mockFetch((url) => url.endsWith('/trace_attributes')
+    ? jsonResponse({ confidence: 0.95, matched_points: [{ edge_index: 0, distance_from_trace_point: 2 }, { edge_index: 1, distance_from_trace_point: 3 }] })
+    : jsonResponse(routePayload));
   await withServer(async (server) => {
     const rejected = await request(server, 'POST', '/api/routing/map-match', {});
     assert.equal(rejected.status, 400);
@@ -398,6 +543,24 @@ test('map-match rejects empty body and accepts shape or locations', async () => 
     });
     assert.equal(locations.status, 200);
     assert.equal(locations.body.matched_points, 2);
+  });
+  restore();
+});
+
+test('map-match reports unmatched points from trace attributes', async () => {
+  const restore = mockFetch((url) => url.endsWith('/trace_attributes')
+    ? jsonResponse({ confidence: 0.5, matched_points: [{ edge_index: 0, distance_from_trace_point: 4 }, { type: 'unmatched', edge_index: null }] })
+    : jsonResponse(routePayload));
+  await withServer(async (server) => {
+    const res = await request(server, 'POST', '/api/routing/map-match', {
+      shape: [{ lat: 26.2235, lon: 50.5876 }, { lat: 26.2285, lon: 50.5860 }],
+      area: 'bahrain'
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.matched_points, 1);
+    assert.equal(res.body.unmatched_points, 1);
+    assert.equal(res.body.snapped_distance_m, 4);
+    assert.equal(res.body.quality_status, 'partial');
   });
   restore();
 });

@@ -1,0 +1,18 @@
+{
+  "region_id": "bahrain",
+  "name": "Bahrain",
+  "country_codes": ["BH", "BHR"],
+  "bbox": [50.2, 25.5, 51.0, 26.6],
+  "pbf_name": "gcc-states-latest.osm.pbf",
+  "pbf_source": "https://download.geofabrik.de/asia/gcc-states-latest.osm.pbf",
+  "graph_output_root": "./builds",
+  "active_root": "./active",
+  "config_path": "./config/valhalla.json",
+  "probe": {
+    "locate": { "lat": 26.2235, "lon": 50.5876 },
+    "route": [
+      { "lat": 26.2235, "lon": 50.5876 },
+      { "lat": 26.2285, "lon": 50.5860 }
+    ]
+  }
+}

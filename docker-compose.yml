@@ -1,74 +1,208 @@
+name: tavrixmaprouting
+
+x-valhalla-common: &valhalla-common
+  image: ${VALHALLA_IMAGE:-ghcr.io/valhalla/valhalla@sha256:35362dd5f215a8dd6f19b8dab7b41a85cbf0e743e010b7ccf8f5aa984bf565a1}
+  restart: unless-stopped
+  expose:
+    - "8002"
+  networks:
+    - routing-internal
+  environment:
+    VALHALLA_SERVICE_CONCURRENCY: ${VALHALLA_SERVICE_CONCURRENCY:-2}
+    VALHALLA_LOG_PATH: ${VALHALLA_LOG_PATH:-/tmp/valhalla-service.log}
+    VALHALLA_HEALTH_LOCATE_JSON: ${VALHALLA_HEALTH_LOCATE_JSON:-}
+    VALHALLA_HEALTH_ROUTE_JSON: ${VALHALLA_HEALTH_ROUTE_JSON:-}
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  mem_limit: ${VALHALLA_MEMORY_LIMIT:-2g}
+  cpus: ${VALHALLA_CPU_LIMIT:-2.5}
+  command: ["sh", "-c", "valhalla_service \"$(cat /valhalla/config/valhalla.json)\" \"$${VALHALLA_SERVICE_CONCURRENCY}\" >> \"$${VALHALLA_LOG_PATH}\" 2>&1"]
+  healthcheck:
+    test: ["CMD-SHELL", "/bin/sh /opt/tavrix/scripts/valhalla-container-health.sh"]
+    interval: 30s
+    timeout: 15s
+    retries: 3
+    start_period: 30s
+
 services:
-  valhalla:
-    image: ghcr.io/valhalla/valhalla:latest
-    container_name: valhalla
-    restart: unless-stopped
-    command: ["sh", "-c", "valhalla_service \"$(cat /valhalla/config/valhalla.json)\" 1"]
-    ports:
-      - "${VALHALLA_PORT:-8002}:8002"
+  valhalla-blue:
+    <<: *valhalla-common
     volumes:
       - ./config:/valhalla/config:ro
-      - ./active/current:/valhalla/build:ro
-    healthcheck:
-      test: ["CMD-SHELL", "valhalla_service \"$$(cat /valhalla/config/valhalla.json)\" status '{}' >/dev/null"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
+      - ./active/blue:/valhalla/build:ro
+      - ./scripts:/opt/tavrix/scripts:ro
 
-  valhalla-world:
-    image: ghcr.io/valhalla/valhalla:latest
-    container_name: valhalla_world
-    profiles: ["world"]
-    restart: unless-stopped
-    command: ["sh", "-c", "valhalla_service \"$(cat /valhalla/config/valhalla.json)\" 1"]
-    ports:
-      - "${VALHALLA_WORLD_PORT:-8003}:8002"
+  valhalla-green:
+    <<: *valhalla-common
     volumes:
-      - ./world/config:/valhalla/config:ro
-      - ./world/active/current:/valhalla/build:ro
-    healthcheck:
-      test: ["CMD-SHELL", "valhalla_service \"$$(cat /valhalla/config/valhalla.json)\" status '{}' >/dev/null"]
-      interval: 60s
-      timeout: 15s
-      retries: 3
-      start_period: 60s
+      - ./config:/valhalla/config:ro
+      - ./active/green:/valhalla/build:ro
+      - ./scripts:/opt/tavrix/scripts:ro
 
   routing-api:
     build:
       context: ./routing-api
-    container_name: routing_api
     restart: unless-stopped
+    expose:
+      - "3000"
+    networks:
+      - routing-internal
     environment:
-      VALHALLA_INTERNAL_URL: ${VALHALLA_INTERNAL_URL:-http://valhalla:8002}
-      VALHALLA_REGIONAL_URL: ${VALHALLA_REGIONAL_URL:-http://valhalla:8002}
+      VALHALLA_BLUE_URL: http://valhalla-blue:8002
+      VALHALLA_GREEN_URL: http://valhalla-green:8002
       VALHALLA_WORLD_URL: ${VALHALLA_WORLD_URL:-}
-      VALHALLA_REGIONAL_BOUNDS: ${VALHALLA_REGIONAL_BOUNDS:-50.2,25.5,51.0,26.6}
-      VALHALLA_IMPORTANT_AREAS: ${VALHALLA_IMPORTANT_AREAS:-bahrain|Bahrain|50.2,25.5,51.0,26.6}
-      VALHALLA_AUTO_FALLBACK: ${VALHALLA_AUTO_FALLBACK:-true}
+      VALHALLA_REGION: ${VALHALLA_REGION:-iraq}
+      VALHALLA_IMPORTANT_AREAS: ${VALHALLA_IMPORTANT_AREAS:-iraq|Iraq|38.7,29.0,48.8,37.5}
+      VALHALLA_ACTIVE_VERSION_PATH: /valhalla/active/active_version.json
+      VALHALLA_ACTIVE_ROOT: /valhalla/active
+      VALHALLA_CONFIG_PATH: /valhalla/config/valhalla.json
+      ROUTING_LIMITS_PATH: /app/config/routing-limits.json
+      ROUTING_REGION_PATH: ${ROUTING_REGION_PATH:-/app/config/regions/iraq.json}
       VALHALLA_TIMEOUT_MS: ${VALHALLA_TIMEOUT_MS:-10000}
-      VALHALLA_INCLUDE_RAW: ${VALHALLA_INCLUDE_RAW:-false}
-      ROUTING_INCLUDE_RAW: ${ROUTING_INCLUDE_RAW:-false}
-      ROUTING_ALLOW_REQUEST_RAW: ${ROUTING_ALLOW_REQUEST_RAW:-false}
-      VALHALLA_REGION: ${VALHALLA_REGION:-bahrain}
-      VALHALLA_ACTIVE_METADATA_PATH: /valhalla/active/current/metadata.json
-      VALHALLA_WORLD_METADATA_PATH: /valhalla/world/active/current/metadata.json
-      ROUTING_API_PORT: ${ROUTING_API_PORT:-3000}
-      ROUTING_INTERNAL_TOKEN: ${ROUTING_INTERNAL_TOKEN:-}
-      MAX_ROUTE_LOCATIONS: ${MAX_ROUTE_LOCATIONS:-25}
-      MAX_MATRIX_SOURCES: ${MAX_MATRIX_SOURCES:-25}
-      MAX_MATRIX_TARGETS: ${MAX_MATRIX_TARGETS:-25}
-      MAX_MATRIX_CELLS: ${MAX_MATRIX_CELLS:-625}
-      MAX_SNAP_LOCATIONS: ${MAX_SNAP_LOCATIONS:-100}
-      DEFAULT_SNAP_RADIUS_METERS: ${DEFAULT_SNAP_RADIUS_METERS:-50}
-      MAX_SNAP_RADIUS_METERS: ${MAX_SNAP_RADIUS_METERS:-500}
-      MAX_MAP_MATCH_POINTS: ${MAX_MAP_MATCH_POINTS:-500}
-      MAX_OPTIMIZATION_JOBS: ${MAX_OPTIMIZATION_JOBS:-50}
-    ports:
-      - "${ROUTING_API_PORT:-3000}:3000"
+      VALHALLA_DNS_TTL_MS: ${VALHALLA_DNS_TTL_MS:-30000}
+      ROUTING_API_PORT: "3000"
+      ROUTING_INCLUDE_RAW: "false"
+      ROUTING_ALLOW_REQUEST_RAW: "false"
+      ROUTING_BUILD_ENDPOINTS_ENABLED: "false"
+      ROUTING_ACCESS_LOG: ${ROUTING_ACCESS_LOG:-false}
+      ROUTING_STANDARD_RATE_LIMIT: ${ROUTING_STANDARD_RATE_LIMIT:-250}
+      ROUTING_EXPENSIVE_RATE_LIMIT: ${ROUTING_EXPENSIVE_RATE_LIMIT:-10}
     volumes:
-      - ./active/current:/valhalla/active/current:ro
+      - ./active:/valhalla/active:ro
+      - ./builds:/valhalla/builds:ro
+      - ./config:/valhalla/config:ro
+      - ./config:/app/config:ro
       - ./world/active/current:/valhalla/world/active/current:ro
     depends_on:
-      valhalla:
-        condition: service_started
+      - valhalla-blue
+      - valhalla-green
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: ${ROUTING_API_MEMORY_LIMIT:-512m}
+    cpus: ${ROUTING_API_CPU_LIMIT:-1.5}
+
+  reverse-proxy:
+    image: nginx:1.28.0-alpine
+    restart: unless-stopped
+    ports:
+      - "${ROUTING_PUBLIC_PORT:-8080}:8080"
+    networks:
+      - edge
+      - routing-internal
+    volumes:
+      - ./deploy/nginx/routing.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - routing-api
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    mem_limit: 128m
+    cpus: ${ROUTING_PROXY_CPU_LIMIT:-1.0}
+
+  routing-updater:
+    profiles: ["updater"]
+    build:
+      context: ./updater
+    command: ["sleep", "infinity"]
+    networks:
+      - edge
+      - routing-internal
+    volumes:
+      - ./active:/valhalla/active
+      - ./builds:/valhalla/builds
+      - ./config:/valhalla/config:ro
+      - ./data:/valhalla/data
+      - ./scripts:/opt/tavrix/scripts:ro
+    environment:
+      VALHALLA_DIR: /valhalla
+      VALHALLA_CONFIG_PATH: /valhalla/config/valhalla.json
+      VALHALLA_REGION_CONFIG_PATH: /valhalla/config/regions/bahrain.json
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: ${ROUTING_UPDATER_MEMORY_LIMIT:-6g}
+    cpus: ${ROUTING_UPDATER_CPU_LIMIT:-4.0}
+
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v3.12.0
+    restart: unless-stopped
+    expose:
+      - "9090"
+    networks:
+      - routing-internal
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    cpus: 0.5
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:13.0.2
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+    networks:
+      - edge
+      - routing-internal
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    environment:
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+    secrets:
+      - grafana_admin_password
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    cpus: 0.5
+
+networks:
+  edge:
+  routing-internal:
+    internal: true
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+secrets:
+  grafana_admin_password:
+    file: ${GRAFANA_ADMIN_PASSWORD_FILE:-./secrets/grafana_admin_password.txt}

@@ -1,0 +1,29 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "fixture_id": "restaurant_to_hotel",
+    "routing_case": { "type": "route" }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [50.5771, 26.2303] },
+      "properties": {
+        "label": "Haji's Cafe, Manama, Bahrain",
+        "country_a": "BH",
+        "country": "Bahrain",
+        "routable_point": { "lat": 26.2303, "lon": 50.5771 }
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [50.5838, 26.2419] },
+      "properties": {
+        "label": "Four Seasons Hotel Bahrain Bay, Manama, Bahrain",
+        "country_a": "BH",
+        "country": "Bahrain",
+        "routable_point": { "lat": 26.2419, "lon": 50.5838 }
+      }
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "fixture_id": "snap_near_road",
+    "routing_case": { "type": "snap", "expect_matched": true }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [50.5876, 26.2235] },
+      "properties": {
+        "label": "Manama near-road snap point, Bahrain",
+        "country_a": "BH",
+        "country": "Bahrain",
+        "routable_point": { "lat": 26.2235, "lon": 50.5876 }
+      }
+    }
+  ]
+}

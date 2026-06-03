@@ -1,0 +1,86 @@
+{
+  "region_id": "iraq",
+  "name": "Iraq",
+  "country_codes": ["IQ", "IRQ"],
+  "bbox": [38.7, 29.0, 48.8, 37.5],
+  "pbf_name": "iraq-latest.osm.pbf",
+  "pbf_source": "https://download.geofabrik.de/asia/iraq-latest.osm.pbf",
+  "expected_active_graph_prefix": "valhalla-iraq-",
+  "build_id_template": "valhalla-iraq-YYYYMMDD-HHMM",
+  "build_timestamp_format": "YYYYMMDD-HHMM",
+  "build_timestamp_timezone": "UTC",
+  "graph_output_root": "./builds",
+  "immutable_build_path_template": "./builds/valhalla-iraq-<timestamp>",
+  "active_root": "./active",
+  "active_slot_paths": {
+    "blue": "./active/blue",
+    "green": "./active/green"
+  },
+  "config_path": "./config/valhalla.json",
+  "config_digest_algorithm": "sha256",
+  "manifest_required_fields": [
+    "build_id",
+    "region_id",
+    "region_name",
+    "pbf_source",
+    "pbf_checksum",
+    "build_timestamp",
+    "tile_count",
+    "total_size_bytes",
+    "valhalla_config_digest",
+    "smoke_test_results"
+  ],
+  "expected_smoke_test_cities": [
+    "Baghdad",
+    "Basra",
+    "Erbil",
+    "Najaf",
+    "Mosul",
+    "Karbala",
+    "Sulaymaniyah"
+  ],
+  "probe": {
+    "locate": { "lat": 33.3152, "lon": 44.3661 },
+    "route": [
+      { "lat": 33.3152, "lon": 44.3661 },
+      { "lat": 33.3026, "lon": 44.3838 }
+    ]
+  },
+  "smoke_tests": {
+    "routes": [
+      {
+        "id": "baghdad_urban_smoke",
+        "locations": [
+          { "lat": 33.3152, "lon": 44.3661 },
+          { "lat": 33.3026, "lon": 44.3838 }
+        ],
+        "min_distance_km": 0.5,
+        "max_distance_km": 15
+      },
+      {
+        "id": "basra_urban_smoke",
+        "locations": [
+          { "lat": 30.5085, "lon": 47.7804 },
+          { "lat": 30.515, "lon": 47.811 }
+        ],
+        "min_distance_km": 0.5,
+        "max_distance_km": 20
+      }
+    ],
+    "locates": [
+      { "id": "baghdad_locate", "location": { "lat": 33.3152, "lon": 44.3661 } },
+      { "id": "basra_locate", "location": { "lat": 30.5085, "lon": 47.7804 } },
+      { "id": "erbil_locate", "location": { "lat": 36.1911, "lon": 44.0092 } }
+    ],
+    "snaps": [
+      { "id": "baghdad_near_road", "location": { "lat": 33.3152, "lon": 44.3661 }, "expect_matched": true },
+      { "id": "iraq_desert_far_from_road", "location": { "lat": 31.2, "lon": 42.2 }, "expect_matched": false }
+    ],
+    "matrix": {
+      "locations": [
+        { "lat": 33.3152, "lon": 44.3661 },
+        { "lat": 33.3026, "lon": 44.3838 }
+      ]
+    }
+  }
+}

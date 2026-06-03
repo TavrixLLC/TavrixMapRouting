@@ -6,6 +6,16 @@
 
 # Active runtime state
 /active/current/*
+/active/blue/*
+/active/green/*
+!/active/blue/.gitkeep
+!/active/green/.gitkeep
+/active/*.next/
+/active/*.previous/
+/active/active_version.json
+/active/.active_build_id
+/active/.last_build_id
+/active/.last_validated_build_id
 /world/active/current/*
 !/world/active/current/.gitkeep
 
@@ -18,3 +28,12 @@
 
 # Lock files
 /.locks/
+/.active_build_id
+/.last_build_id
+/.last_validated_build_id
+
+# Local secrets and generated reports
+/secrets/*.txt
+!/secrets/.gitkeep
+/reports/*
+!/reports/.gitkeep

@@ -1,0 +1,29 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "fixture_id": "mosque_to_hospital",
+    "routing_case": { "type": "route" }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [50.6078, 26.2186] },
+      "properties": {
+        "label": "Al Fateh Grand Mosque, Manama, Bahrain",
+        "country_a": "BH",
+        "country": "Bahrain",
+        "routable_point": { "lat": 26.2186, "lon": 50.6078 }
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [50.5775, 26.2173] },
+      "properties": {
+        "label": "Salmaniya Medical Complex, Manama, Bahrain",
+        "country_a": "BH",
+        "country": "Bahrain",
+        "routable_point": { "lat": 26.2173, "lon": 50.5775 }
+      }
+    }
+  ]
+}

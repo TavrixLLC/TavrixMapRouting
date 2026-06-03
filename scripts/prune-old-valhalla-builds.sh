@@ -5,10 +5,11 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 BUILDS_PATH="$(resolve_under_valhalla "${BUILDS_PATH}")"
 ACTIVE_BUILD_ID=""
-if [[ -f "${VALHALLA_DIR}/.active_build_id" ]]; then
-  ACTIVE_BUILD_ID="$(cat "${VALHALLA_DIR}/.active_build_id")"
-elif [[ -f "$(resolve_under_valhalla "${ACTIVE_PATH}")/metadata.json" ]]; then
-  ACTIVE_BUILD_ID="$(grep '"build_id"' "$(resolve_under_valhalla "${ACTIVE_PATH}")/metadata.json" | sed 's/.*: *"//; s/".*//')"
+ACTIVE_ROOT="$(resolve_under_valhalla "${ACTIVE_ROOT}")"
+if [[ -f "${ACTIVE_ROOT}/.active_build_id" ]]; then
+  ACTIVE_BUILD_ID="$(cat "${ACTIVE_ROOT}/.active_build_id")"
+elif [[ -f "${ACTIVE_ROOT}/active_version.json" ]]; then
+  ACTIVE_BUILD_ID="$(grep '"build_id"' "${ACTIVE_ROOT}/active_version.json" | sed 's/.*: *"//; s/".*//')"
 fi
 
 [[ -d "${BUILDS_PATH}" ]] || exit 0

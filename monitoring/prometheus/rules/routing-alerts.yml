@@ -1,0 +1,33 @@
+groups:
+  - name: tavrix-routing
+    rules:
+      - alert: TavrixRoutingNotReady
+        expr: routing_ready == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations: { summary: "Routing readiness is failing" }
+      - alert: TavrixRouteProbeFailing
+        expr: routing_route_probe_ok == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations: { summary: "Known route probe is failing" }
+      - alert: TavrixRouteP95High
+        expr: histogram_quantile(0.95, sum(rate(routing_request_duration_seconds_bucket{endpoint="POST /api/routing/route"}[5m])) by (le)) > 0.5
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "Route p95 latency exceeds 500ms" }
+      - alert: TavrixSnapMatchRateDrop
+        expr: sum(rate(routing_snap_results_total{matched="true"}[10m])) / clamp_min(sum(rate(routing_snap_results_total[10m])), 1) < 0.8
+        for: 15m
+        labels: { severity: warning }
+        annotations: { summary: "Snap match rate dropped below 80%" }
+      - alert: TavrixGraphTooOld
+        expr: time() - routing_active_graph_created_timestamp_seconds > 604800
+        for: 1h
+        labels: { severity: warning }
+        annotations: { summary: "Active graph is older than seven days" }
+      - alert: TavrixValhallaErrorsSpike
+        expr: sum(rate(routing_upstream_errors_total[5m])) > 1
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Valhalla upstream errors are elevated" }

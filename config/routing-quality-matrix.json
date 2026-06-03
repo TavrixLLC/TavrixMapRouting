@@ -1,0 +1,61 @@
+{
+  "region_id": "bahrain",
+  "strict": true,
+  "thresholds": {
+    "route_p95_ms": 500,
+    "snap_p95_ms": 250
+  },
+  "routes": [
+    {
+      "id": "manama_short_urban",
+      "locations": [
+        { "lat": 26.2235, "lon": 50.5876 },
+        { "lat": 26.2285, "lon": 50.5860 }
+      ],
+      "min_distance_km": 0.1,
+      "max_distance_km": 10
+    },
+    {
+      "id": "manama_cross_neighborhood",
+      "locations": [
+        { "lat": 26.2285, "lon": 50.5860 },
+        { "lat": 26.2167, "lon": 50.5831 },
+        { "lat": 26.2041, "lon": 50.5787 }
+      ],
+      "min_distance_km": 0.5,
+      "max_distance_km": 25
+    },
+    {
+      "id": "manama_geocoder_routable_point_fixture",
+      "source": "geocoder_routable_point_fixture",
+      "locations": [
+        { "lat": 26.2235, "lon": 50.5876 },
+        { "lat": 26.2285, "lon": 50.5860 }
+      ],
+      "min_distance_km": 0.1,
+      "max_distance_km": 10
+    }
+  ],
+  "snaps": [
+    {
+      "id": "manama_near_road",
+      "location": { "lat": 26.2235, "lon": 50.5876 },
+      "expect_matched": true
+    },
+    {
+      "id": "bahrain_offshore_far_from_road",
+      "location": { "lat": 25.55, "lon": 50.25 },
+      "expect_matched": false
+    }
+  ],
+  "matrix": {
+    "locations": [
+      { "lat": 26.2235, "lon": 50.5876 },
+      { "lat": 26.2285, "lon": 50.5860 }
+    ]
+  },
+  "isochrone": {
+    "locations": [{ "lat": 26.2235, "lon": 50.5876 }],
+    "contours": [{ "time": 5 }]
+  }
+}

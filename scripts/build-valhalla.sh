@@ -30,14 +30,19 @@ write_metadata "${BUILD_DIR}/metadata.json" "building" "${BUILD_ID}" "${CREATED_
 cp "${CONFIG_PATH}" "${BUILD_DIR}/valhalla.json"
 
 set +e
-docker run --rm \
-  -v "${VALHALLA_DIR}/config:/valhalla/config:ro" \
-  -v "$(dirname "${PBF_PATH}"):/valhalla/data:ro" \
-  -v "${BUILD_DIR}:/valhalla/build" \
-  "${IMAGE}" \
-  valhalla_build_tiles -c /valhalla/config/valhalla.json "/valhalla/data/$(basename "${PBF_PATH}")" \
-  2>&1 | tee "${BUILD_DIR}/build.log"
-BUILD_STATUS="${PIPESTATUS[0]}"
+if command -v valhalla_build_tiles >/dev/null 2>&1 && prepare_local_build_path "${BUILD_DIR}"; then
+  valhalla_build_tiles -c "${CONFIG_PATH}" "${PBF_PATH}" 2>&1 | tee "${BUILD_DIR}/build.log"
+  BUILD_STATUS="${PIPESTATUS[0]}"
+else
+  docker run --rm \
+    -v "${VALHALLA_DIR}/config:/valhalla/config:ro" \
+    -v "$(dirname "${PBF_PATH}"):/valhalla/data:ro" \
+    -v "${BUILD_DIR}:/valhalla/build" \
+    "${IMAGE}" \
+    valhalla_build_tiles -c /valhalla/config/valhalla.json "/valhalla/data/$(basename "${PBF_PATH}")" \
+    2>&1 | tee "${BUILD_DIR}/build.log"
+  BUILD_STATUS="${PIPESTATUS[0]}"
+fi
 set -e
 
 if [[ "${BUILD_STATUS}" -ne 0 ]]; then
@@ -45,13 +50,20 @@ if [[ "${BUILD_STATUS}" -ne 0 ]]; then
   fail "graph tile build failed for ${BUILD_ID}"
 fi
 
-docker run --rm \
-  -v "${VALHALLA_DIR}/config:/valhalla/config:ro" \
-  -v "${BUILD_DIR}:/valhalla/build" \
-  "${IMAGE}" \
-  valhalla_build_extract -c /valhalla/config/valhalla.json -v \
-  2>&1 | tee "${BUILD_DIR}/extract.log"
+if command -v valhalla_build_extract >/dev/null 2>&1 && prepare_local_build_path "${BUILD_DIR}"; then
+  valhalla_build_extract -c "${CONFIG_PATH}" -v 2>&1 | tee "${BUILD_DIR}/extract.log"
+else
+  docker run --rm \
+    -v "${VALHALLA_DIR}/config:/valhalla/config:ro" \
+    -v "${BUILD_DIR}:/valhalla/build" \
+    "${IMAGE}" \
+    valhalla_build_extract -c /valhalla/config/valhalla.json -v \
+    2>&1 | tee "${BUILD_DIR}/extract.log"
+fi
 
 write_metadata "${BUILD_DIR}/metadata.json" "built" "${BUILD_ID}" "${CREATED_AT}"
-printf '%s\n' "${BUILD_ID}" > "${VALHALLA_DIR}/.last_build_id"
+write_manifest "${BUILD_DIR}" "${BUILD_ID}" "${CREATED_AT}" "pending"
+ACTIVE_ROOT="$(resolve_under_valhalla "${ACTIVE_ROOT}")"
+mkdir -p "${ACTIVE_ROOT}"
+printf '%s\n' "${BUILD_ID}" > "${ACTIVE_ROOT}/.last_build_id"
 log "built ${BUILD_ID}"

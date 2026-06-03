@@ -1,0 +1,274 @@
+{
+  "region_id": "iraq",
+  "strict": true,
+  "thresholds": {
+    "route_p95_ms": 500,
+    "snap_p95_ms": 250
+  },
+  "routes": [
+    {
+      "id": "baghdad_focus_short_urban_route",
+      "city": "Baghdad",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "require_geometry": true,
+      "locations": [
+        { "lat": 33.3152, "lon": 44.3661 },
+        { "lat": 33.3026, "lon": 44.3838 }
+      ],
+      "min_distance_km": 0.5,
+      "max_distance_km": 15,
+      "target_class": "urban_focus"
+    },
+    {
+      "id": "baghdad_city_center_route",
+      "city": "Baghdad",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "require_geometry": true,
+      "locations": [
+        { "lat": 33.3128, "lon": 44.3615 },
+        { "lat": 33.3244, "lon": 44.4010 }
+      ],
+      "min_distance_km": 1,
+      "max_distance_km": 20,
+      "target_class": "city_center"
+    },
+    {
+      "id": "baghdad_restaurant_poi_style_route",
+      "city": "Baghdad",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "require_geometry": true,
+      "locations": [
+        { "lat": 33.3250, "lon": 44.4220 },
+        { "lat": 33.2990, "lon": 44.3950 }
+      ],
+      "min_distance_km": 1,
+      "max_distance_km": 25,
+      "target_class": "poi_to_poi"
+    },
+    {
+      "id": "basra_short_urban_route",
+      "city": "Basra",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "require_geometry": true,
+      "locations": [
+        { "lat": 30.5085, "lon": 47.7804 },
+        { "lat": 30.5150, "lon": 47.8110 }
+      ],
+      "min_distance_km": 0.5,
+      "max_distance_km": 20,
+      "target_class": "urban"
+    },
+    {
+      "id": "erbil_short_urban_route",
+      "city": "Erbil",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "require_geometry": true,
+      "locations": [
+        { "lat": 36.1911, "lon": 44.0092 },
+        { "lat": 36.2040, "lon": 44.0350 }
+      ],
+      "min_distance_km": 0.5,
+      "max_distance_km": 20,
+      "target_class": "urban"
+    },
+    {
+      "id": "najaf_short_urban_route",
+      "city": "Najaf",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "require_geometry": true,
+      "locations": [
+        { "lat": 32.0003, "lon": 44.3267 },
+        { "lat": 32.0250, "lon": 44.3460 }
+      ],
+      "min_distance_km": 0.5,
+      "max_distance_km": 20,
+      "target_class": "urban"
+    },
+    {
+      "id": "mosul_short_urban_route",
+      "city": "Mosul",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "require_geometry": true,
+      "locations": [
+        { "lat": 36.3350, "lon": 43.1189 },
+        { "lat": 36.3500, "lon": 43.1450 }
+      ],
+      "min_distance_km": 0.5,
+      "max_distance_km": 25,
+      "target_class": "urban"
+    },
+    {
+      "id": "karbala_short_urban_route",
+      "city": "Karbala",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "require_geometry": true,
+      "locations": [
+        { "lat": 32.6160, "lon": 44.0249 },
+        { "lat": 32.5960, "lon": 44.0160 }
+      ],
+      "min_distance_km": 0.5,
+      "max_distance_km": 20,
+      "target_class": "urban"
+    },
+    {
+      "id": "sulaymaniyah_short_urban_route",
+      "city": "Sulaymaniyah",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "require_geometry": true,
+      "locations": [
+        { "lat": 35.5550, "lon": 45.4350 },
+        { "lat": 35.5700, "lon": 45.4500 }
+      ],
+      "min_distance_km": 0.5,
+      "max_distance_km": 20,
+      "target_class": "urban"
+    }
+  ],
+  "snaps": [
+    {
+      "id": "baghdad_near_road",
+      "city": "Baghdad",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "location": { "lat": 33.3152, "lon": 44.3661 },
+      "radius_meters": 50,
+      "expect_matched": true
+    },
+    {
+      "id": "baghdad_far_off_road",
+      "city": "Baghdad",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "location": { "lat": 33.3500, "lon": 44.2200 },
+      "radius_meters": 25,
+      "expect_matched": false
+    },
+    {
+      "id": "basra_near_road",
+      "city": "Basra",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "location": { "lat": 30.5085, "lon": 47.7804 },
+      "radius_meters": 50,
+      "expect_matched": true
+    },
+    {
+      "id": "basra_far_off_road",
+      "city": "Basra",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "location": { "lat": 30.4200, "lon": 47.7400 },
+      "radius_meters": 25,
+      "expect_matched": false
+    },
+    {
+      "id": "erbil_near_road",
+      "city": "Erbil",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "location": { "lat": 36.1911, "lon": 44.0092 },
+      "radius_meters": 50,
+      "expect_matched": true
+    },
+    {
+      "id": "erbil_far_off_road",
+      "city": "Erbil",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "location": { "lat": 36.1500, "lon": 43.9000 },
+      "radius_meters": 25,
+      "expect_matched": false
+    },
+    {
+      "id": "najaf_near_road",
+      "city": "Najaf",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "location": { "lat": 32.0003, "lon": 44.3267 },
+      "radius_meters": 50,
+      "expect_matched": true
+    },
+    {
+      "id": "najaf_far_off_road",
+      "city": "Najaf",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "location": { "lat": 31.9300, "lon": 44.2200 },
+      "radius_meters": 25,
+      "expect_matched": false
+    },
+    {
+      "id": "mosul_near_road",
+      "city": "Mosul",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "location": { "lat": 36.3350, "lon": 43.1189 },
+      "radius_meters": 50,
+      "expect_matched": true
+    },
+    {
+      "id": "mosul_far_off_road",
+      "city": "Mosul",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "location": { "lat": 36.3000, "lon": 43.0500 },
+      "radius_meters": 25,
+      "expect_matched": false
+    },
+    {
+      "id": "karbala_near_road",
+      "city": "Karbala",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "location": { "lat": 32.6160, "lon": 44.0249 },
+      "radius_meters": 50,
+      "expect_matched": true
+    },
+    {
+      "id": "karbala_far_off_road",
+      "city": "Karbala",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "location": { "lat": 32.5200, "lon": 43.9500 },
+      "radius_meters": 25,
+      "expect_matched": false
+    },
+    {
+      "id": "sulaymaniyah_near_road",
+      "city": "Sulaymaniyah",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "location": { "lat": 35.5550, "lon": 45.4350 },
+      "radius_meters": 50,
+      "expect_matched": true
+    },
+    {
+      "id": "sulaymaniyah_far_off_road",
+      "city": "Sulaymaniyah",
+      "expected_country": "IQ",
+      "expected_region": "iraq",
+      "location": { "lat": 35.5000, "lon": 45.3400 },
+      "radius_meters": 25,
+      "expect_matched": false
+    }
+  ],
+  "matrix": {
+    "locations": [
+      { "lat": 33.3152, "lon": 44.3661 },
+      { "lat": 33.3026, "lon": 44.3838 }
+    ]
+  },
+  "isochrone": {
+    "locations": [{ "lat": 33.3152, "lon": 44.3661 }],
+    "contours": [{ "time": 5 }]
+  }
+}

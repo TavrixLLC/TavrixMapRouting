@@ -1,8 +1,8 @@
 {
   "logging": {
-    "type": "std_out",
-    "color": true,
-    "file_name": "path_to_some_file.log"
+    "type": "file",
+    "color": false,
+    "file_name": "/tmp/valhalla.log"
   },
   "mjolnir": {
     "max_cache_size": 1000000000,

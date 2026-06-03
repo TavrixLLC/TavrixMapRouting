@@ -1,0 +1,19 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "fixture_id": "snap_offshore_far_from_road",
+    "routing_case": { "type": "snap", "expect_matched": false }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [50.25, 25.55] },
+      "properties": {
+        "label": "Bahrain offshore far-from-road snap point",
+        "country_a": "BH",
+        "country": "Bahrain",
+        "routable_point": { "lat": 25.55, "lon": 50.25 }
+      }
+    }
+  ]
+}

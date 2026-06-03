@@ -1,27 +1,5 @@
-# Valhalla World Graph
+# Optional World Graph
 
-This folder is reserved for the optional world routing graph.
+The public deployment does not start or build a world graph. Regional requests outside configured Bahrain coverage return a clear `503` unless `VALHALLA_WORLD_URL` points to a separately operated world Valhalla service.
 
-Use it only when you decide to build a large `planet-latest.osm.pbf` graph. The Bahrain/regional Valhalla service stays in `valhalla/active/current`; the world service uses:
-
-```text
-valhalla/world/data/planet-latest.osm.pbf
-valhalla/world/config/valhalla.json
-valhalla/world/builds/
-valhalla/world/active/current/
-```
-
-The world service is disabled by default. Enable it with:
-
-```bash
-cd valhalla
-VALHALLA_WORLD_URL=http://valhalla-world:8002 docker compose --profile world up -d --build
-```
-
-Recommended update frequency:
-
-```text
-world graph: monthly, quarterly, or manually when needed
-regional graph: daily or weekly for priority markets
-```
-
+Planet builds are intentionally outside this repository's default Compose stack because their storage, memory, and update requirements are materially larger than the Bahrain graph.

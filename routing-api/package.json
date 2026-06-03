@@ -6,7 +6,15 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "test:scripts": "node scripts/check-shell-line-endings.mjs",
+    "test:routing-quality-matrix": "node scripts/routing-quality-matrix.mjs",
+    "test:geocoder-routing-fixture": "node scripts/geocoder-routing-fixture.mjs",
+    "test:geocoder-routing-fixture:bahrain": "node scripts/geocoder-routing-fixture.mjs --fixture-dir fixtures/geocoder/bahrain --expected-country BH --report-name geocoder-routing-fixture-bahrain-static",
+    "test:route-quality-gate": "node scripts/route-load-gate.mjs",
+    "graph:build": "node scripts/graph-region-command.mjs build",
+    "graph:validate": "node scripts/graph-region-command.mjs validate",
+    "graph:activate": "node scripts/graph-region-command.mjs activate"
   },
   "dependencies": {
     "express": "^4.19.2"

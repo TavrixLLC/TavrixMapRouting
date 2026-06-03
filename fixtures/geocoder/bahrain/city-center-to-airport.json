@@ -1,0 +1,29 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "fixture_id": "city_center_to_airport",
+    "routing_case": { "type": "route" }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [50.555, 26.2325] },
+      "properties": {
+        "label": "City Centre Bahrain, Manama, Bahrain",
+        "country_a": "BH",
+        "country": "Bahrain",
+        "routable_point": { "lat": 26.2325, "lon": 50.555 }
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [50.6336, 26.2708] },
+      "properties": {
+        "label": "Bahrain International Airport, Muharraq, Bahrain",
+        "country_a": "BH",
+        "country": "Bahrain",
+        "routable_point": { "lat": 26.2708, "lon": 50.6336 }
+      }
+    }
+  ]
+}

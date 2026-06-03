@@ -1,0 +1,33 @@
+{
+  "title": "Tavrix Routing Overview",
+  "uid": "tavrix-routing",
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Ready",
+      "targets": [{ "expr": "routing_ready" }],
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "Route Probe",
+      "targets": [{ "expr": "routing_route_probe_ok" }],
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Route p95 Latency",
+      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(routing_request_duration_seconds_bucket{endpoint=\"POST /api/routing/route\"}[5m])) by (le))" }],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Snap Match Rate",
+      "targets": [{ "expr": "sum(rate(routing_snap_results_total{matched=\"true\"}[5m])) / clamp_min(sum(rate(routing_snap_results_total[5m])), 1)" }],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 }
+    }
+  ]
+}

@@ -1,48 +1,75 @@
 import express from 'express';
-import { access, readdir, readFile } from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { access, readdir, readFile, stat } from 'node:fs/promises';
+import { constants, readFileSync, watch } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { buildOpenApiSpec } from './openapi.js';
 
 const app = express();
+app.set('trust proxy', 1);
 
 const PORT = Number(process.env.ROUTING_API_PORT || 3000);
-const REGIONAL_URL = process.env.VALHALLA_REGIONAL_URL || process.env.VALHALLA_INTERNAL_URL || 'http://valhalla:8002';
+const BLUE_URL = process.env.VALHALLA_BLUE_URL || process.env.VALHALLA_REGIONAL_URL || process.env.VALHALLA_INTERNAL_URL || 'http://valhalla-blue:8002';
+const GREEN_URL = process.env.VALHALLA_GREEN_URL || 'http://valhalla-green:8002';
 const WORLD_URL = process.env.VALHALLA_WORLD_URL || '';
 const TIMEOUT_MS = Number(process.env.VALHALLA_TIMEOUT_MS || 10000);
+const VALHALLA_DNS_ROUND_ROBIN = String(process.env.VALHALLA_DNS_ROUND_ROBIN || 'true') === 'true';
+const VALHALLA_DNS_TTL_MS = Number(process.env.VALHALLA_DNS_TTL_MS || 30000);
+const ROUTING_ACCESS_LOG = String(process.env.ROUTING_ACCESS_LOG || 'false') === 'true';
 const REGION = process.env.VALHALLA_REGION || 'bahrain';
-const ACTIVE_METADATA_PATH = process.env.VALHALLA_ACTIVE_METADATA_PATH || '/valhalla/active/current/metadata.json';
+const ACTIVE_ROOT = process.env.VALHALLA_ACTIVE_ROOT || '/valhalla/active';
+const ACTIVE_VERSION_PATH = process.env.VALHALLA_ACTIVE_VERSION_PATH || join(ACTIVE_ROOT, 'active_version.json');
+const VALHALLA_CONFIG_PATH = process.env.VALHALLA_CONFIG_PATH || '/valhalla/config/valhalla.json';
 const WORLD_METADATA_PATH = process.env.VALHALLA_WORLD_METADATA_PATH || '';
 const BUILDS_PATH = process.env.VALHALLA_BUILDS_PATH || '/valhalla/builds';
-const ACTIVE_GRAPH_PATH = process.env.VALHALLA_ACTIVE_GRAPH_PATH || '/valhalla/active/current';
 const INTERNAL_TOKEN = process.env.ROUTING_INTERNAL_TOKEN || '';
 const BUILD_ENDPOINTS_ENABLED = String(process.env.ROUTING_BUILD_ENDPOINTS_ENABLED || 'true') === 'true';
-const MAX_ROUTE_LOCATIONS = readPositiveInt('MAX_ROUTE_LOCATIONS', process.env.MAX_ROUTE_LOCATIONS || process.env.ROUTING_MAX_ROUTE_LOCATIONS || 25);
-const MAX_MATRIX_SOURCES = readPositiveInt('MAX_MATRIX_SOURCES', process.env.MAX_MATRIX_SOURCES || 25);
-const MAX_MATRIX_TARGETS = readPositiveInt('MAX_MATRIX_TARGETS', process.env.MAX_MATRIX_TARGETS || 25);
-const MAX_MATRIX_CELLS = readPositiveInt('MAX_MATRIX_CELLS', process.env.MAX_MATRIX_CELLS || process.env.ROUTING_MAX_MATRIX_CELLS || 625);
-const MAX_SNAP_LOCATIONS = readPositiveInt('MAX_SNAP_LOCATIONS', process.env.MAX_SNAP_LOCATIONS || 100);
-const DEFAULT_SNAP_RADIUS_METERS = readPositiveInt('DEFAULT_SNAP_RADIUS_METERS', process.env.DEFAULT_SNAP_RADIUS_METERS || 50);
-const MAX_SNAP_RADIUS_METERS = readPositiveInt('MAX_SNAP_RADIUS_METERS', process.env.MAX_SNAP_RADIUS_METERS || 500);
-const MAX_MAP_MATCH_POINTS = readPositiveInt('MAX_MAP_MATCH_POINTS', process.env.MAX_MAP_MATCH_POINTS || 500);
-const MAX_OPTIMIZATION_JOBS = readPositiveInt('MAX_OPTIMIZATION_JOBS', process.env.MAX_OPTIMIZATION_JOBS || process.env.ROUTING_MAX_OPTIMIZATION_JOBS || 50);
+const LIMITS_PATH = process.env.ROUTING_LIMITS_PATH || '../config/routing-limits.json';
+const REGION_PATH = process.env.ROUTING_REGION_PATH || `../config/regions/${REGION}.json`;
+const LIMITS = loadJsonFileSync(LIMITS_PATH, {});
+const REGION_CONFIG = loadJsonFileSync(REGION_PATH, {});
+const MAX_ROUTE_LOCATIONS = configuredLimit('MAX_ROUTE_LOCATIONS', 'max_route_locations', 20);
+const MAX_MATRIX_SOURCES = configuredLimit('MAX_MATRIX_SOURCES', 'max_matrix_sources', 25);
+const MAX_MATRIX_TARGETS = configuredLimit('MAX_MATRIX_TARGETS', 'max_matrix_targets', 25);
+const MAX_MATRIX_CELLS = configuredLimit('MAX_MATRIX_CELLS', 'max_matrix_cells', 625);
+const MAX_SNAP_LOCATIONS = configuredLimit('MAX_SNAP_LOCATIONS', 'max_snap_locations', 100);
+const DEFAULT_SNAP_RADIUS_METERS = configuredLimit('DEFAULT_SNAP_RADIUS_METERS', 'default_snap_radius_meters', 50);
+const MAX_SNAP_RADIUS_METERS = configuredLimit('MAX_SNAP_RADIUS_METERS', 'max_snap_radius_meters', 200);
+const MAX_MAP_MATCH_POINTS = configuredLimit('MAX_MAP_MATCH_POINTS', 'max_map_match_points', 500);
+const MAX_OPTIMIZATION_JOBS = configuredLimit('MAX_OPTIMIZATION_JOBS', 'max_optimization_jobs', 18);
+const MAX_ISOCHRONE_LOCATIONS = configuredLimit('MAX_ISOCHRONE_LOCATIONS', 'max_isochrone_locations', 1);
+const MAX_ISOCHRONE_CONTOURS = configuredLimit('MAX_ISOCHRONE_CONTOURS', 'max_isochrone_contours', 4);
+const MAX_ALTERNATIVES = configuredLimit('MAX_ALTERNATIVES', 'max_alternatives', 2);
 const REGIONAL_BOUNDS = parseBounds(process.env.VALHALLA_REGIONAL_BOUNDS || '50.2,25.5,51.0,26.6');
 const IMPORTANT_AREAS = parseImportantAreas(process.env.VALHALLA_IMPORTANT_AREAS, REGION, REGIONAL_BOUNDS);
+const PROBE_LOCATE = REGION_CONFIG.probe?.locate || { lat: 26.2235, lon: 50.5876 };
+const PROBE_ROUTE = REGION_CONFIG.probe?.route || [{ lat: 26.2235, lon: 50.5876 }, { lat: 26.2285, lon: 50.5860 }];
 
-const COSTING = new Set(['auto', 'pedestrian', 'bicycle', 'motor_scooter', 'truck', 'bus', 'taxi']);
+let activeVersion = loadActiveVersion();
+const upstreamDnsCache = new Map();
+const upstreamRoundRobin = new Map();
+const upstreamInflight = new Map();
+startActiveVersionWatcher();
+validateLimitsAgainstValhalla();
+
+const COSTING = new Set(['auto', 'pedestrian', 'bicycle', 'motor_scooter', 'motorcycle', 'truck', 'bus', 'taxi']);
 const UNITS = new Set(['kilometers', 'miles']);
 const ENGINES = new Set(['auto', 'regional', 'world']);
 const SHAPE_FORMATS = new Set(['polyline6', 'polyline', 'geojson']);
 const OVERVIEWS = new Set(['full', 'simplified', 'false']);
 const ANNOTATIONS = new Set(['duration', 'distance', 'speed', 'nodes', 'road_class', 'maxspeed']);
 
-app.use(express.json({ limit: '512kb' }));
 app.use(requestIdMiddleware);
 app.use(metricsMiddleware);
+app.use(express.json({ limit: '512kb' }));
+app.use(jsonBodyErrorMiddleware);
+app.use(rateLimitMiddleware);
 
 const OPENAPI_SPEC = buildOpenApiSpec({
   port: PORT,
-  regionalUrl: REGIONAL_URL,
+  regionalUrl: regionalUrl(),
   worldUrl: WORLD_URL,
   region: REGION,
   importantAreas: IMPORTANT_AREAS
@@ -54,6 +81,12 @@ function apiError(status, code, message, details) {
 
 function sendError(res, status, code, message, details) {
   return res.status(status).json(withRequestId(res, apiError(status, code, message, details)));
+}
+
+function jsonBodyErrorMiddleware(err, _req, res, next) {
+  if (err?.type === 'entity.parse.failed') return sendError(res, 400, 'invalid_json', 'Request body must be valid JSON');
+  if (err?.type === 'entity.too.large') return sendError(res, 413, 'payload_too_large', 'Request body exceeds the 512kb limit');
+  return next(err);
 }
 
 function withRequestId(res, payload) {
@@ -74,16 +107,23 @@ function requestIdMiddleware(req, res, next) {
 function endpointLabel(req) {
   return req.route?.path
     ? `${req.method} ${Array.isArray(req.route.path) ? req.route.path[0] : req.route.path}`
-    : `${req.method} ${req.path}`;
+    : `${req.method} unmatched`;
 }
 
+const HISTOGRAM_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
 const metrics = {
   requestTotal: new Map(),
   requestDuration: new Map(),
+  requestHistogram: new Map(),
   upstreamDuration: new Map(),
+  upstreamHistogram: new Map(),
   upstreamErrors: new Map(),
+  snapResults: new Map(),
   matrixCells: 0,
-  optimizationJobs: 0
+  optimizationJobs: 0,
+  ready: 0,
+  routeProbeOk: 0,
+  locateProbeOk: 0
 };
 
 function inc(map, key, by = 1) {
@@ -97,14 +137,35 @@ function observe(map, key, value) {
   map.set(key, current);
 }
 
+function observeHistogram(map, key, value) {
+  const current = map.get(key) || { count: 0, sum: 0, buckets: HISTOGRAM_BUCKETS.map(() => 0) };
+  current.count += 1;
+  current.sum += value;
+  HISTOGRAM_BUCKETS.forEach((bucket, index) => {
+    if (value <= bucket) current.buckets[index] += 1;
+  });
+  map.set(key, current);
+}
+
 function metricsMiddleware(req, res, next) {
   const started = process.hrtime.bigint();
+  const end = res.end;
+  res.end = function (...args) {
+    if (!res.headersSent) {
+      const milliseconds = Number(process.hrtime.bigint() - started) / 1e6;
+      res.setHeader('x-response-time-ms', milliseconds.toFixed(1));
+    }
+    return end.apply(this, args);
+  };
   res.on('finish', () => {
     const seconds = Number(process.hrtime.bigint() - started) / 1e9;
     const endpoint = endpointLabel(req);
     inc(metrics.requestTotal, `${endpoint}|${res.statusCode}`);
     observe(metrics.requestDuration, endpoint, seconds);
-    console.log(JSON.stringify({ request_id: req.requestId, method: req.method, path: req.path, status: res.statusCode, duration_ms: Math.round(seconds * 1000) }));
+    observeHistogram(metrics.requestHistogram, endpoint, seconds);
+    if (ROUTING_ACCESS_LOG || res.statusCode >= 400) {
+      console.log(JSON.stringify({ request_id: req.requestId, method: req.method, path: req.path, status: res.statusCode, duration_ms: Math.round(seconds * 1000) }));
+    }
   });
   next();
 }
@@ -116,10 +177,10 @@ function renderMetrics() {
       const [endpoint, status] = key.split('|');
       return `routing_request_total{endpoint=${JSON.stringify(endpoint)},status=${JSON.stringify(status)}} ${value}`;
     }),
-    '# TYPE routing_request_duration_seconds summary',
-    ...summaryLines('routing_request_duration_seconds', metrics.requestDuration, ['endpoint']),
-    '# TYPE routing_upstream_duration_seconds summary',
-    ...summaryLines('routing_upstream_duration_seconds', metrics.upstreamDuration, ['endpoint', 'engine']),
+    '# TYPE routing_request_duration_seconds histogram',
+    ...histogramLines('routing_request_duration_seconds', metrics.requestHistogram, ['endpoint']),
+    '# TYPE routing_upstream_duration_seconds histogram',
+    ...histogramLines('routing_upstream_duration_seconds', metrics.upstreamHistogram, ['endpoint', 'engine']),
     '# TYPE routing_upstream_errors_total counter',
     ...Array.from(metrics.upstreamErrors.entries()).map(([key, value]) => {
       const [engine, code] = key.split('|');
@@ -128,7 +189,20 @@ function renderMetrics() {
     '# TYPE routing_matrix_cells_total counter',
     `routing_matrix_cells_total ${metrics.matrixCells}`,
     '# TYPE routing_optimization_jobs_total counter',
-    `routing_optimization_jobs_total ${metrics.optimizationJobs}`
+    `routing_optimization_jobs_total ${metrics.optimizationJobs}`,
+    '# TYPE routing_snap_results_total counter',
+    `routing_snap_results_total{matched="true"} ${metrics.snapResults.get('true') || 0}`,
+    `routing_snap_results_total{matched="false"} ${metrics.snapResults.get('false') || 0}`,
+    '# TYPE routing_ready gauge',
+    `routing_ready ${metrics.ready}`,
+    '# TYPE routing_route_probe_ok gauge',
+    `routing_route_probe_ok ${metrics.routeProbeOk}`,
+    '# TYPE routing_locate_probe_ok gauge',
+    `routing_locate_probe_ok ${metrics.locateProbeOk}`,
+    '# TYPE routing_active_graph_info gauge',
+    `routing_active_graph_info{version=${JSON.stringify(graphVersion() || 'unknown')},color=${JSON.stringify(activeVersion.active)}} 1`,
+    '# TYPE routing_active_graph_created_timestamp_seconds gauge',
+    `routing_active_graph_created_timestamp_seconds ${activeVersion.created_at ? Math.floor(new Date(activeVersion.created_at).getTime() / 1000) : 0}`
   ];
   return `${lines.join('\n')}\n`;
 }
@@ -148,6 +222,116 @@ function readPositiveInt(name, value) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${name} must be a positive integer`);
   return parsed;
+}
+
+const rateLimitWindows = new Map();
+
+function rateLimitMiddleware(req, res, next) {
+  if (process.env.NODE_ENV === 'test') return next();
+  const path = req.path;
+  const expensive = /^\/api\/routing\/(matrix|isochrone|map-match|optimization)$/.test(path);
+  const standard = /^\/api\/routing\/(route|distance|snap|nearest)$/.test(path) || path.startsWith('/api/routing/directions/');
+  if (!expensive && !standard) return next();
+  const limit = expensive ? Number(process.env.ROUTING_EXPENSIVE_RATE_LIMIT || 10) : Number(process.env.ROUTING_STANDARD_RATE_LIMIT || 250);
+  const now = Date.now();
+  const key = `${req.ip}|${expensive ? 'expensive' : 'standard'}`;
+  const current = rateLimitWindows.get(key);
+  const windowState = !current || now >= current.resetAt ? { count: 0, resetAt: now + 1000 } : current;
+  windowState.count += 1;
+  rateLimitWindows.set(key, windowState);
+  res.setHeader('x-ratelimit-limit', String(limit));
+  res.setHeader('x-ratelimit-remaining', String(Math.max(0, limit - windowState.count)));
+  if (windowState.count > limit) return sendError(res, 429, 'rate_limited', 'Too many routing requests');
+  if (rateLimitWindows.size > 10000) {
+    for (const [entryKey, value] of rateLimitWindows) if (now >= value.resetAt) rateLimitWindows.delete(entryKey);
+  }
+  return next();
+}
+
+function histogramLines(metricName, map, labelNames) {
+  return Array.from(map.entries()).flatMap(([key, value]) => {
+    const parts = key.split('|');
+    const baseLabels = labelNames.map((name, index) => `${name}=${JSON.stringify(parts[index] || '')}`);
+    return [
+      ...HISTOGRAM_BUCKETS.map((bucket, index) => `${metricName}_bucket{${[...baseLabels, `le=${JSON.stringify(String(bucket))}`].join(',')}} ${value.buckets[index]}`),
+      `${metricName}_bucket{${[...baseLabels, 'le="+Inf"'].join(',')}} ${value.count}`,
+      `${metricName}_count{${baseLabels.join(',')}} ${value.count}`,
+      `${metricName}_sum{${baseLabels.join(',')}} ${value.sum}`
+    ];
+  });
+}
+
+function loadJsonFileSync(filePath, fallback = null) {
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
+function isSafeBuildId(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value);
+}
+
+function configuredLimit(envName, configName, fallback) {
+  const configured = readPositiveInt(configName, LIMITS[configName] ?? fallback);
+  const overridden = process.env[envName];
+  if (overridden == null || overridden === '') return configured;
+  const value = readPositiveInt(envName, overridden);
+  if (value > configured) throw new Error(`${envName}=${value} exceeds configured safety limit ${configured}`);
+  return value;
+}
+
+function validateLimitsAgainstValhalla() {
+  const config = loadJsonFileSync(VALHALLA_CONFIG_PATH);
+  if (!config) return;
+  const serviceLimits = config.service_limits || {};
+  const auto = serviceLimits.auto || {};
+  const isochrone = serviceLimits.isochrone || {};
+  const conflicts = [];
+  if (MAX_ROUTE_LOCATIONS > Number(auto.max_locations || 0)) conflicts.push(`route locations ${MAX_ROUTE_LOCATIONS} > Valhalla auto.max_locations ${auto.max_locations}`);
+  if (MAX_SNAP_RADIUS_METERS > Number(serviceLimits.max_radius || 0)) conflicts.push(`snap radius ${MAX_SNAP_RADIUS_METERS} > Valhalla max_radius ${serviceLimits.max_radius}`);
+  if (MAX_ISOCHRONE_LOCATIONS > Number(isochrone.max_locations || 0)) conflicts.push(`isochrone locations ${MAX_ISOCHRONE_LOCATIONS} > Valhalla isochrone.max_locations ${isochrone.max_locations}`);
+  if (MAX_ALTERNATIVES > Number(serviceLimits.max_alternates || 0)) conflicts.push(`alternatives ${MAX_ALTERNATIVES} > Valhalla max_alternates ${serviceLimits.max_alternates}`);
+  if (MAX_MATRIX_CELLS > Number(auto.max_matrix_location_pairs || 0)) conflicts.push(`matrix cells ${MAX_MATRIX_CELLS} > Valhalla auto.max_matrix_location_pairs ${auto.max_matrix_location_pairs}`);
+  if (conflicts.length) throw new Error(`Routing limit configuration conflicts with Valhalla: ${conflicts.join('; ')}`);
+}
+
+function loadActiveVersion() {
+  const version = loadJsonFileSync(ACTIVE_VERSION_PATH, {});
+  const active = version.active === 'green' ? 'green' : 'blue';
+  return {
+    active,
+    previous: version.previous === 'green' ? 'green' : 'blue',
+    build_id: version.build_id || null,
+    created_at: version.created_at || null,
+    config_sha256: version.config_sha256 || null
+  };
+}
+
+function startActiveVersionWatcher() {
+  if (process.env.NODE_ENV === 'test') return;
+  try {
+    watch(dirname(ACTIVE_VERSION_PATH), (_event, filename) => {
+      if (!filename || String(filename) === ACTIVE_VERSION_PATH.split(/[\\/]/).pop()) {
+        activeVersion = loadActiveVersion();
+      }
+    });
+  } catch {
+    // Readiness reports a missing active version file; startup remains useful for diagnostics.
+  }
+}
+
+function regionalUrl() {
+  return activeVersion.active === 'green' ? GREEN_URL : BLUE_URL;
+}
+
+function activeGraphPath() {
+  return join(ACTIVE_ROOT, activeVersion.active);
+}
+
+function graphVersion() {
+  return activeVersion.build_id;
 }
 
 function isNumber(value) {
@@ -301,13 +485,14 @@ function collectRouteOptions(source) {
     || validateTruck(options.truck);
   if (validationError) return { validationError };
   if (options.depart_at && options.arrive_by) return { validationError: 'depart_at and arrive_by cannot both be set' };
-  if (!Number.isInteger(options.max_alternatives) || options.max_alternatives < 1 || options.max_alternatives > 3) return { validationError: 'max_alternatives must be between 1 and 3' };
+  if (!Number.isInteger(options.max_alternatives) || options.max_alternatives < 1 || options.max_alternatives > MAX_ALTERNATIVES) return { validationError: `max_alternatives must be between 1 and ${MAX_ALTERNATIVES}` };
   for (const field of booleans) if (options[field] === null) return { validationError: `${field} must be true or false` };
   if (options.include_raw === null) return { validationError: 'include_raw must be true or false' };
   for (const annotation of options.annotations) {
     if (!ANNOTATIONS.has(annotation)) return { validationError: `annotations contains unsupported value: ${annotation}` };
   }
-  if (options.annotations.length) warnings.push('Valhalla does not expose all requested Mapbox-style annotations through this proxy; unsupported annotations are returned as warnings.');
+  if (options.overview === 'simplified') return { validationError: 'overview=simplified is not supported; use full or false' };
+  if (options.annotations.length) return { validationError: 'annotations are not supported by this Valhalla proxy' };
   if (options.depart_at || options.arrive_by) warnings.push('Time-dependent routing is passed to Valhalla when supported; live traffic is not configured in this deployment.');
   if (options.voice_instructions || options.banner_instructions) warnings.push('Voice/banner instructions are represented by maneuver instructions when Valhalla narrative is available.');
   return { options, warnings };
@@ -321,19 +506,22 @@ function shouldIncludeRaw(options = {}) {
 
 function selectRoutingEngine(locations, requestedEngine = 'auto', requestedArea = null) {
   const selectedArea = findArea(requestedArea);
+  const matchingArea = findContainingArea(locations);
   if (requestedEngine === 'regional') {
     if (selectedArea && !locations.every((point) => insideBounds(point, selectedArea.bounds))) {
       return { name: 'regional', url: null, area: selectedArea.id, error: `Route points are outside selected area: ${selectedArea.id}` };
     }
-    return { name: 'regional', url: REGIONAL_URL, area: selectedArea?.id || findContainingArea(locations)?.id || REGION };
+    if (!selectedArea && !matchingArea) {
+      return { name: 'regional', url: null, area: REGION, error: 'Route points are outside regional graph coverage' };
+    }
+    return { name: 'regional', url: regionalUrl(), area: selectedArea?.id || matchingArea?.id || REGION };
   }
   if (requestedEngine === 'world') return WORLD_URL ? { name: 'world', url: WORLD_URL } : { name: 'world', url: null, error: 'World Valhalla is not configured' };
   if (selectedArea) {
-    if (locations.every((point) => insideBounds(point, selectedArea.bounds))) return { name: 'regional', url: REGIONAL_URL, area: selectedArea.id };
+    if (locations.every((point) => insideBounds(point, selectedArea.bounds))) return { name: 'regional', url: regionalUrl(), area: selectedArea.id };
     return { name: 'world', url: WORLD_URL || null, area: selectedArea.id, error: WORLD_URL ? null : `World Valhalla is not configured and route is outside selected area: ${selectedArea.id}` };
   }
-  const matchingArea = findContainingArea(locations);
-  if (matchingArea) return { name: 'regional', url: REGIONAL_URL, area: matchingArea.id };
+  if (matchingArea) return { name: 'regional', url: regionalUrl(), area: matchingArea.id };
   if (WORLD_URL) return { name: 'world', url: WORLD_URL };
   return { name: 'world', url: null, error: 'World Valhalla is not configured for routes outside the regional bounds' };
 }
@@ -373,8 +561,10 @@ async function callValhalla(path, body, engine) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
   const started = process.hrtime.bigint();
+  let upstream = { url: trimTrailingSlash(engine.url), release: () => {} };
   try {
-    const response = await fetch(`${engine.url}${path}`, {
+    upstream = await selectUpstream(engine.url);
+    const response = await fetch(`${upstream.url}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -394,10 +584,79 @@ async function callValhalla(path, body, engine) {
     inc(metrics.upstreamErrors, `${engine.name}|${status}`);
     return { ok: false, status, body: apiError(status, timedOut ? 'upstream_timeout' : 'upstream_unavailable', timedOut ? 'Valhalla request timed out' : 'Valhalla is unavailable') };
   } finally {
+    upstream.release();
     const seconds = Number(process.hrtime.bigint() - started) / 1e9;
     observe(metrics.upstreamDuration, `${path}|${engine.name}`, seconds);
+    observeHistogram(metrics.upstreamHistogram, `${path}|${engine.name}`, seconds);
     clearTimeout(timeout);
   }
+}
+
+async function selectUpstream(baseUrl) {
+  const fallback = { url: trimTrailingSlash(baseUrl), release: () => {} };
+  if (process.env.NODE_ENV === 'test') return fallback;
+  if (!VALHALLA_DNS_ROUND_ROBIN) return fallback;
+  let url;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return fallback;
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || isIP(url.hostname) || url.hostname === 'localhost') {
+    return fallback;
+  }
+  const cacheKey = `${url.protocol}//${url.hostname}:${url.port || defaultPort(url.protocol)}`;
+  const now = Date.now();
+  let addresses = upstreamDnsCache.get(cacheKey);
+  if (!addresses || now >= addresses.expiresAt) {
+    try {
+      const records = await lookup(url.hostname, { all: true, verbatim: true });
+      const values = Array.from(new Set(records.map((record) => record.address).filter(Boolean))).sort();
+      addresses = { values, expiresAt: now + VALHALLA_DNS_TTL_MS };
+      upstreamDnsCache.set(cacheKey, addresses);
+    } catch {
+      return fallback;
+    }
+  }
+  if (addresses.values.length < 2) return fallback;
+  const selected = selectLeastInflightAddress(cacheKey, addresses.values);
+  const inflightKey = `${cacheKey}|${selected}`;
+  upstreamInflight.set(inflightKey, (upstreamInflight.get(inflightKey) || 0) + 1);
+  url.hostname = selected;
+  return {
+    url: trimTrailingSlash(url.toString()),
+    release: () => {
+      const current = upstreamInflight.get(inflightKey) || 0;
+      if (current <= 1) upstreamInflight.delete(inflightKey);
+      else upstreamInflight.set(inflightKey, current - 1);
+    }
+  };
+}
+
+function selectLeastInflightAddress(cacheKey, values) {
+  let least = Infinity;
+  let candidates = [];
+  for (const value of values) {
+    const current = upstreamInflight.get(`${cacheKey}|${value}`) || 0;
+    if (current < least) {
+      least = current;
+      candidates = [value];
+    } else if (current === least) {
+      candidates.push(value);
+    }
+  }
+  const tieKey = `${cacheKey}|least_inflight_tie`;
+  const index = upstreamRoundRobin.get(tieKey) || 0;
+  upstreamRoundRobin.set(tieKey, (index + 1) % candidates.length);
+  return candidates[index % candidates.length];
+}
+
+function trimTrailingSlash(value) {
+  return String(value || '').replace(/\/+$/, '');
+}
+
+function defaultPort(protocol) {
+  return protocol === 'https:' ? '443' : '80';
 }
 
 async function readMetadata(filePath) {
@@ -433,6 +692,87 @@ async function checkValhallaStatus(url) {
   }
 }
 
+async function listFilesRecursive(root) {
+  const files = [];
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const filePath = join(root, entry.name);
+    if (entry.isDirectory()) files.push(...await listFilesRecursive(filePath));
+    else files.push(filePath);
+  }
+  return files;
+}
+
+function extractCorrelatedLocations(payload) {
+  if (Array.isArray(payload)) return payload;
+  return payload?.correlated_locations || payload?.locations || [];
+}
+
+function locateHasEdge(payload) {
+  return extractCorrelatedLocations(payload).some((location) => Array.isArray(location?.edges) && location.edges.length > 0);
+}
+
+function routeIsSane(payload) {
+  const summary = payload?.trip?.summary;
+  const shape = payload?.trip?.legs?.[0]?.shape || payload?.trip?.shape;
+  return isNumber(summary?.length) && summary.length > 0 && isNumber(summary?.time) && summary.time > 0 && Boolean(shape);
+}
+
+async function validateActiveGraph() {
+  activeVersion = loadActiveVersion();
+  const graphPath = activeGraphPath();
+  const result = {
+    ok: false,
+    active_color: activeVersion.active,
+    active_build: graphVersion(),
+    graph_path: graphPath,
+    config_path: VALHALLA_CONFIG_PATH,
+    checks: {}
+  };
+  try {
+    await access(VALHALLA_CONFIG_PATH, constants.R_OK);
+    result.checks.config_exists = true;
+  } catch {
+    result.checks.config_exists = false;
+  }
+  try {
+    await access(ACTIVE_VERSION_PATH, constants.R_OK);
+    result.checks.active_version_exists = Boolean(graphVersion());
+  } catch {
+    result.checks.active_version_exists = false;
+  }
+  try {
+    const graphStat = await stat(graphPath);
+    result.checks.graph_directory_exists = graphStat.isDirectory();
+    const files = await listFilesRecursive(graphPath);
+    result.graph_file_count = files.length;
+    result.checks.graph_non_empty = files.length > 0;
+    result.checks.manifest_exists = files.includes(join(graphPath, 'manifest.json'));
+    result.checks.graph_tiles_exist = files.some((file) => file.endsWith('valhalla_tiles.tar') || file.endsWith('.gph') || file.endsWith('.bin'));
+  } catch {
+    result.checks.graph_directory_exists = false;
+    result.checks.graph_non_empty = false;
+    result.checks.manifest_exists = false;
+    result.checks.graph_tiles_exist = false;
+  }
+  result.regional = await checkValhallaStatus(regionalUrl());
+  result.checks.status_ok = result.regional.ok;
+  if (result.regional.ok) {
+    const engine = { name: 'regional', url: regionalUrl(), area: REGION };
+    const locate = await callValhalla('/locate', { locations: [PROBE_LOCATE], costing: 'auto', verbose: true }, engine);
+    result.checks.locate_probe_ok = locate.ok && locateHasEdge(locate.body);
+    const route = await callValhalla('/route', { locations: PROBE_ROUTE, costing: 'auto' }, engine);
+    result.checks.route_probe_ok = route.ok && routeIsSane(route.body);
+  } else {
+    result.checks.locate_probe_ok = false;
+    result.checks.route_probe_ok = false;
+  }
+  result.ok = Object.values(result.checks).every(Boolean);
+  metrics.ready = result.ok ? 1 : 0;
+  metrics.locateProbeOk = result.checks.locate_probe_ok ? 1 : 0;
+  metrics.routeProbeOk = result.checks.route_probe_ok ? 1 : 0;
+  return result;
+}
+
 function decodePolyline6(encoded) {
   if (!encoded) return [];
   let index = 0;
@@ -464,9 +804,60 @@ function decodeChunk(encoded, startIndex) {
   return { value: result & 1 ? ~(result >> 1) : result >> 1, index };
 }
 
-function routeGeometry(shape, format) {
-  if (format === 'geojson') return { type: 'LineString', coordinates: decodePolyline6(shape) };
-  return shape || '';
+function encodePolyline(coordinates, precision = 6) {
+  const factor = 10 ** precision;
+  let previousLat = 0;
+  let previousLon = 0;
+  let encoded = '';
+  for (const [lon, lat] of coordinates) {
+    const scaledLat = Math.round(lat * factor);
+    const scaledLon = Math.round(lon * factor);
+    encoded += encodeChunk(scaledLat - previousLat);
+    encoded += encodeChunk(scaledLon - previousLon);
+    previousLat = scaledLat;
+    previousLon = scaledLon;
+  }
+  return encoded;
+}
+
+function encodeChunk(value) {
+  let current = value < 0 ? ~(value << 1) : value << 1;
+  let encoded = '';
+  while (current >= 0x20) {
+    encoded += String.fromCharCode((0x20 | (current & 0x1f)) + 63);
+    current >>= 5;
+  }
+  return encoded + String.fromCharCode(current + 63);
+}
+
+function mergeLegCoordinates(legs) {
+  const merged = [];
+  for (const leg of legs) {
+    const coordinates = decodePolyline6(leg.shape || '');
+    if (merged.length && coordinates.length) {
+      const [lastLon, lastLat] = merged[merged.length - 1];
+      const [firstLon, firstLat] = coordinates[0];
+      if (lastLon === firstLon && lastLat === firstLat) coordinates.shift();
+    }
+    merged.push(...coordinates);
+  }
+  return merged;
+}
+
+function routeGeometry(coordinates, format, overview = 'full') {
+  if (overview === 'false') return null;
+  if (format === 'geojson') return { type: 'LineString', coordinates };
+  return encodePolyline(coordinates, format === 'polyline' ? 5 : 6);
+}
+
+function routeGeometryFromTrip(trip, legs, options) {
+  if (options.overview === 'false') return { geometry: null, coordinates: [] };
+  if (options.shape_format === 'polyline6') {
+    if (legs.length === 1 && legs[0].shape) return { geometry: legs[0].shape, coordinates: null };
+    if (!legs.length && trip?.shape) return { geometry: trip.shape, coordinates: null };
+  }
+  const coordinates = legs.length ? mergeLegCoordinates(legs) : decodePolyline6(trip?.shape || '');
+  return { geometry: routeGeometry(coordinates, options.shape_format, options.overview), coordinates };
 }
 
 function metersFromValhallaLength(length, units) {
@@ -521,17 +912,22 @@ function maneuverModifier(maneuver) {
 function routeFromTrip(trip, units, options, engine, warnings) {
   const legs = trip?.legs || [];
   const summary = trip?.summary || {};
-  const shape = legs[0]?.shape || trip?.shape || '';
-  const shapeCoords = decodePolyline6(shape);
+  const { geometry } = routeGeometryFromTrip(trip, legs, options);
+  const legDistance = legs.reduce((sum, leg) => sum + (leg.summary?.length || leg.length || 0), 0);
+  const legDuration = legs.reduce((sum, leg) => sum + (leg.summary?.time || leg.time || 0), 0);
+  const totalDistance = summary.length ?? legDistance;
+  const totalDuration = summary.time ?? legDuration;
+  if (legs.length && Math.abs(totalDistance - legDistance) > 0.01) warnings.push('trip summary distance differs from summed leg distance');
+  if (legs.length && Math.abs(totalDuration - legDuration) > 1) warnings.push('trip summary duration differs from summed leg duration');
   return {
-    distance: summary.length ?? legs.reduce((sum, leg) => sum + (leg.summary?.length || 0), 0),
-    duration: summary.time ?? legs.reduce((sum, leg) => sum + (leg.summary?.time || 0), 0),
-    geometry: routeGeometry(shape, options.shape_format),
+    distance: totalDistance,
+    duration: totalDuration,
+    geometry,
     legs: legs.map((leg) => ({
       distance: leg.summary?.length ?? leg.length ?? 0,
       duration: leg.summary?.time ?? leg.time ?? 0,
       summary: leg.summary?.has_time_restrictions ? 'time restricted route' : '',
-      steps: options.steps === false ? [] : buildSteps(leg, shapeCoords)
+      steps: options.steps === false ? [] : buildSteps(leg, decodePolyline6(leg.shape || ''))
     })),
     annotations: buildAnnotations(options.annotations, warnings),
     engine: engine.name,
@@ -566,6 +962,7 @@ function simplifyRoute(raw, units, options, engine, optionWarnings = []) {
     routes,
     engine: engine.name,
     area: engine.area || null,
+    graph_version: graphVersion(),
     warnings,
     ...(shouldIncludeRaw(options) ? { raw } : {})
   };
@@ -617,17 +1014,17 @@ app.get('/api/routing/areas/:areaId', (req, res) => {
 app.get('/api/routing/areas/:areaId/health', async (req, res) => {
   const area = findArea(req.params.areaId);
   if (!area) return sendError(res, 404, 'not_found', 'Area not found');
-  return res.json({ area: area.id, ...(await checkValhallaStatus(REGIONAL_URL)) });
+  const readiness = await validateActiveGraph();
+  return res.status(readiness.ok ? 200 : 503).json({ area: area.id, ...readiness });
 });
 
 app.get('/api/routing/areas/:areaId/coverage', async (req, res) => {
   const area = findArea(req.params.areaId);
   if (!area) return sendError(res, 404, 'not_found', 'Area not found');
-  const metadata = await readMetadata(ACTIVE_METADATA_PATH);
-  return res.json({ area: area.id, bounds: area.bounds, graph_path: ACTIVE_GRAPH_PATH, build_id: metadata?.build_id || null, enabled_profiles: Array.from(COSTING), min_lat: area.bounds.minLat, max_lat: area.bounds.maxLat, min_lon: area.bounds.minLon, max_lon: area.bounds.maxLon });
+  return res.json({ area: area.id, bounds: area.bounds, graph_path: activeGraphPath(), build_id: graphVersion(), active_color: activeVersion.active, enabled_profiles: Array.from(COSTING), min_lat: area.bounds.minLat, max_lat: area.bounds.maxLat, min_lon: area.bounds.minLon, max_lon: area.bounds.maxLon });
 });
 
-app.get('/api/routing/areas/:areaId/builds', async (req, res) => {
+app.get('/api/routing/areas/:areaId/builds', requireInternal, async (req, res) => {
   if (!findArea(req.params.areaId)) return sendError(res, 404, 'not_found', 'Area not found');
   return res.json({ area: req.params.areaId, builds: await listBuilds() });
 });
@@ -635,26 +1032,18 @@ app.get('/api/routing/areas/:areaId/builds', async (req, res) => {
 app.get('/api/routing/health/live', (_req, res) => res.json({ status: 'ok' }));
 
 app.get('/api/routing/health/dependencies', async (_req, res) => {
-  res.json({ regional: await checkValhallaStatus(REGIONAL_URL), world: await checkValhallaStatus(WORLD_URL) });
+  res.json({ regional: await checkValhallaStatus(regionalUrl()), world: await checkValhallaStatus(WORLD_URL), active_color: activeVersion.active, graph_version: graphVersion() });
 });
 
 app.get('/api/routing/health/ready', async (_req, res) => {
-  const regional = await checkValhallaStatus(REGIONAL_URL);
-  const metadata = await readMetadata(ACTIVE_METADATA_PATH);
-  let activeGraphExists = true;
-  try {
-    await access(ACTIVE_GRAPH_PATH, constants.R_OK);
-  } catch {
-    activeGraphExists = false;
-  }
-  const ready = regional.ok && activeGraphExists && Boolean(metadata?.build_id) && IMPORTANT_AREAS.length > 0;
-  return res.status(ready ? 200 : 503).json({ status: ready ? 'ok' : 'not_ready', regional, active_graph_exists: activeGraphExists, active_build: metadata?.build_id || null, areas_count: IMPORTANT_AREAS.length });
+  const readiness = await validateActiveGraph();
+  return res.status(readiness.ok ? 200 : 503).json({ status: readiness.ok ? 'ok' : 'not_ready', ...readiness, areas_count: IMPORTANT_AREAS.length });
 });
 
 app.get('/api/routing/health', async (_req, res) => {
-  const [regionalStatus, worldStatus, regionalMetadata, worldMetadata] = await Promise.all([checkValhallaStatus(REGIONAL_URL), checkValhallaStatus(WORLD_URL), readMetadata(ACTIVE_METADATA_PATH), readMetadata(WORLD_METADATA_PATH)]);
-  if (!regionalStatus.ok) return sendError(res, 503, 'unhealthy', 'Valhalla health check failed');
-  return res.json({ status: 'ok', service: 'valhalla-router', mode: 'regional-plus-optional-world', region: regionalMetadata?.region || REGION, active_build: regionalMetadata?.build_id || null, engines: { regional: { ...regionalStatus, areas: IMPORTANT_AREAS, active_build: regionalMetadata?.build_id || null }, world: { ...worldStatus, active_build: worldMetadata?.build_id || null } } });
+  const [readiness, worldStatus, worldMetadata] = await Promise.all([validateActiveGraph(), checkValhallaStatus(WORLD_URL), readMetadata(WORLD_METADATA_PATH)]);
+  const payload = { status: readiness.ok ? 'ok' : 'not_ready', service: 'valhalla-router', mode: 'regional-plus-optional-world', region: REGION, active_build: graphVersion(), active_color: activeVersion.active, checks: readiness.checks, engines: { regional: { ...readiness.regional, areas: IMPORTANT_AREAS, active_build: graphVersion() }, world: { ...worldStatus, active_build: worldMetadata?.build_id || null } } };
+  return res.status(readiness.ok ? 200 : 503).json(payload);
 });
 
 app.get('/api/routing/directions/:costing/:coordinates', async (req, res) => {
@@ -700,20 +1089,20 @@ app.post('/api/routing/matrix', async (req, res) => {
   const matrix = result.body.sources_to_targets || [];
   const cellCount = sources.length * targets.length;
   metrics.matrixCells += cellCount;
-  return res.json({ sources_count: sources.length, targets_count: targets.length, cells: cellCount, durations: matrix.map((row) => row.map((cell) => cell.time ?? null)), distances: matrix.map((row) => row.map((cell) => cell.distance ?? null)), engine: result.engine.name, area: result.engine.area || null, warnings: [], ...(shouldIncludeRaw(body) ? { raw: result.body } : {}) });
+  return res.json({ sources_count: sources.length, targets_count: targets.length, cells: cellCount, durations: matrix.map((row) => row.map((cell) => cell.time ?? null)), distances: matrix.map((row) => row.map((cell) => cell.distance ?? null)), engine: result.engine.name, area: result.engine.area || null, graph_version: graphVersion(), warnings: [], ...(shouldIncludeRaw(body) ? { raw: result.body } : {}) });
 });
 
 app.post('/api/routing/isochrone', async (req, res) => {
   const body = req.body || {};
   const costing = body.costing || 'auto';
   const contours = body.contours || [];
-  const validationError = validateLocations(body.locations, { min: 1, max: 2 }) || validateEnum(costing, COSTING, 'costing') || validateEnum(body.engine || 'auto', ENGINES, 'engine') || validateArea(body.area || null);
+  const validationError = validateLocations(body.locations, { min: 1, max: MAX_ISOCHRONE_LOCATIONS }) || validateEnum(costing, COSTING, 'costing') || validateEnum(body.engine || 'auto', ENGINES, 'engine') || validateArea(body.area || null);
   if (validationError) return sendValidationError(res, validationError);
-  if (!Array.isArray(contours) || contours.length < 1 || contours.length > 4) return sendError(res, 400, 'invalid_request', 'contours must include 1 to 4 items');
+  if (!Array.isArray(contours) || contours.length < 1 || contours.length > MAX_ISOCHRONE_CONTOURS) return sendError(res, 400, 'invalid_request', `contours must include 1 to ${MAX_ISOCHRONE_CONTOURS} items`);
   const engine = selectRoutingEngine(body.locations, body.engine || 'auto', body.area || null);
   const result = await callValhalla('/isochrone', { locations: body.locations, costing, contours, polygons: body.polygons !== false }, engine);
   if (!result.ok) return res.status(result.status).json(withRequestId(res, result.body));
-  return res.json({ type: result.body.type || 'FeatureCollection', features: result.body.features || [], ...result.body, engine: result.engine.name, area: result.engine.area || null, warnings: [] });
+  return res.json({ type: result.body.type || 'FeatureCollection', features: result.body.features || [], ...result.body, engine: result.engine.name, area: result.engine.area || null, graph_version: graphVersion(), warnings: [] });
 });
 
 app.post('/api/routing/map-match', async (req, res) => {
@@ -724,34 +1113,76 @@ app.post('/api/routing/map-match', async (req, res) => {
   if (hasShape && hasLocations) return sendValidationError(res, 'map-match accepts either shape or locations, not both');
   const shape = hasShape ? body.shape : body.locations;
   const costing = body.costing || 'auto';
-  const validationError = validateLocations(shape, { min: 2, max: MAX_MAP_MATCH_POINTS, name: 'shape' }) || validateEnum(costing, COSTING, 'costing') || validateEnum(body.engine || 'auto', ENGINES, 'engine') || validateArea(body.area || null);
+  const validationError = validateLocations(shape, { min: 2, max: MAX_MAP_MATCH_POINTS, name: 'shape' })
+    || validateEnum(costing, COSTING, 'costing')
+    || validateEnum(body.engine || 'auto', ENGINES, 'engine')
+    || validateEnum(body.units || 'kilometers', UNITS, 'units')
+    || validateEnum(body.shape_format || 'polyline6', SHAPE_FORMATS, 'shape_format')
+    || validateEnum(body.overview || 'full', OVERVIEWS, 'overview')
+    || validateArea(body.area || null);
   if (validationError) return sendValidationError(res, validationError);
+  if (body.overview === 'simplified') return sendValidationError(res, 'overview=simplified is not supported; use full or false');
   const engine = selectRoutingEngine(shape, body.engine || 'auto', body.area || null);
-  const result = await callValhalla('/trace_route', { shape, costing, shape_match: body.shape_match || 'map_snap', directions_options: { units: body.units || 'kilometers', narrative: body.steps !== false } }, engine);
-  if (!result.ok) return res.status(result.status).json(withRequestId(res, result.body));
-  const route = simplifyRoute(result.body, body.units || 'kilometers', { shape_format: body.shape_format || 'polyline6', steps: body.steps !== false, annotations: [] }, result.engine);
-  return res.json({ confidence: result.body.confidence ?? null, matched_points: shape.length, unmatched_points: 0, snapped_distance_m: 0, geometry: route.geometry, routes: route.routes, engine: result.engine.name, area: result.engine.area || null, warnings: route.warnings || [], ...(shouldIncludeRaw(body) ? { raw: result.body } : {}) });
+  const traceBody = { shape, costing, shape_match: body.shape_match || 'map_snap' };
+  const attributesResult = await callValhalla('/trace_attributes', traceBody, engine);
+  if (!attributesResult.ok) return res.status(attributesResult.status).json(withRequestId(res, attributesResult.body));
+  const routeResult = await callValhalla('/trace_route', { ...traceBody, directions_options: { units: body.units || 'kilometers', narrative: body.steps !== false } }, engine);
+  if (!routeResult.ok) return res.status(routeResult.status).json(withRequestId(res, routeResult.body));
+  const route = simplifyRoute(routeResult.body, body.units || 'kilometers', { shape_format: body.shape_format || 'polyline6', overview: body.overview || 'full', steps: body.steps !== false, annotations: [] }, routeResult.engine);
+  const trace = summarizeTraceAttributes(attributesResult.body);
+  return res.json({ ...trace, geometry: route.geometry, routes: route.routes, engine: routeResult.engine.name, area: routeResult.engine.area || null, graph_version: graphVersion(), warnings: route.warnings || [], ...(shouldIncludeRaw(body) ? { raw: { attributes: attributesResult.body, route: routeResult.body } } : {}) });
 });
+
+function summarizeTraceAttributes(attributes) {
+  const points = Array.isArray(attributes?.matched_points) ? attributes.matched_points : null;
+  if (!points) return { confidence: attributes?.confidence ?? null, matched_points: null, unmatched_points: null, snapped_distance_m: null, quality_status: 'trace_attributes_missing_matched_points' };
+  const unmatchedPoints = points.filter((point) => point.type === 'unmatched' || point.edge_index == null).length;
+  const snappedDistance = points.reduce((sum, point) => sum + (isNumber(point.distance_from_trace_point) ? point.distance_from_trace_point : 0), 0);
+  return { confidence: attributes?.confidence ?? null, matched_points: points.length - unmatchedPoints, unmatched_points: unmatchedPoints, snapped_distance_m: snappedDistance, quality_status: unmatchedPoints ? 'partial' : 'matched' };
+}
 
 app.post(['/api/routing/snap', '/api/routing/nearest'], async (req, res) => {
   const body = req.body || {};
-  const locations = body.locations || [];
+  const locations = body.locations || (isNumber(body.lat) && isNumber(body.lon) ? [{ lat: body.lat, lon: body.lon }] : []);
   const costing = body.costing || 'auto';
-  const radius = body.radius == null ? DEFAULT_SNAP_RADIUS_METERS : Number(body.radius);
+  const radiusValue = body.radius ?? body.radius_meters;
+  const radius = radiusValue == null ? DEFAULT_SNAP_RADIUS_METERS : Number(radiusValue);
   const validationError = validateLocations(locations, { min: 1, max: MAX_SNAP_LOCATIONS }) || validateEnum(costing, COSTING, 'costing') || validateEnum(body.engine || 'auto', ENGINES, 'engine') || validateArea(body.area || null);
   if (validationError) return sendValidationError(res, validationError);
   if (!isNumber(radius) || radius <= 0 || radius > MAX_SNAP_RADIUS_METERS) return sendError(res, 400, 'invalid_request', `radius must be between 1 and ${MAX_SNAP_RADIUS_METERS}`);
   const engine = selectRoutingEngine(locations, body.engine || 'auto', body.area || null);
   const result = await callValhalla('/locate', { locations, costing, radius, verbose: true }, engine);
   if (!result.ok) return res.status(result.status).json(withRequestId(res, result.body));
-  const correlated = result.body?.correlated_locations || result.body?.locations || [];
-  return res.json({ results: locations.map((input, index) => normalizeNearest(input, correlated[index], shouldIncludeRaw(body))), engine: result.engine.name, area: result.engine.area || null, warnings: [], ...(shouldIncludeRaw(body) ? { raw: result.body } : {}) });
+  const correlated = extractCorrelatedLocations(result.body);
+  const results = locations.map((input, index) => normalizeNearest(input, correlated[index], shouldIncludeRaw(body), radius));
+  for (const item of results) inc(metrics.snapResults, String(item.matched));
+  return res.json({ results, engine: result.engine.name, area: result.engine.area || null, graph_version: graphVersion(), warnings: [], ...(shouldIncludeRaw(body) ? { raw: result.body } : {}) });
 });
 
-function normalizeNearest(input, correlated, includeRaw = false) {
+function normalizeNearest(input, correlated, includeRaw = false, maxDistanceMeters = DEFAULT_SNAP_RADIUS_METERS) {
   const edge = correlated?.edges?.[0] || correlated?.edge || {};
-  const snapped = correlated?.lat != null && correlated?.lon != null ? { lat: correlated.lat, lon: correlated.lon } : input;
-  return { input, snapped, distance_meters: correlated?.distance ?? haversineMeters(input, snapped), edge_id: edge.id ?? null, road_name: edge.names?.[0] || edge.name || '', road_class: edge.road_class || null, speed: edge.speed ?? null, maxspeed: edge.maxspeed ?? null, ...(includeRaw ? { edge_metadata: edge } : {}) };
+  const snappedLat = correlated?.lat ?? edge.correlated_lat ?? edge.lat;
+  const snappedLon = correlated?.lon ?? edge.correlated_lon ?? edge.lon;
+  const candidate = Object.keys(edge).length > 0 && isNumber(snappedLat) && isNumber(snappedLon);
+  const candidateSnapped = candidate ? { lat: snappedLat, lon: snappedLon } : null;
+  const candidateDistance = candidate ? (correlated?.distance ?? edge.distance ?? haversineMeters(input, candidateSnapped)) : null;
+  const matched = candidate && isNumber(candidateDistance) && candidateDistance <= maxDistanceMeters;
+  const snapped = matched ? candidateSnapped : null;
+  return {
+    input,
+    matched,
+    snapped,
+    distance_meters: matched ? candidateDistance : null,
+    edge_id: matched ? (edge.id ?? edge.graph_id ?? null) : null,
+    road_name: matched ? (edge.names?.[0] || edge.name || '') : '',
+    road_class: matched ? (edge.road_class || null) : null,
+    speed: matched ? (edge.speed ?? null) : null,
+    maxspeed: matched ? (edge.maxspeed ?? null) : null,
+    side_of_street: matched ? (edge.side_of_street ?? correlated?.side_of_street ?? null) : null,
+    graph_version: graphVersion(),
+    ...(matched ? {} : { reason: candidate ? 'outside_radius' : 'no_edge_found' }),
+    ...(includeRaw ? { edge_metadata: edge } : {})
+  };
 }
 
 app.post('/api/routing/distance', async (req, res) => {
@@ -762,13 +1193,16 @@ app.post('/api/routing/distance', async (req, res) => {
   const options = { units: 'kilometers', engine: body.engine || 'auto', area: body.area || null, shape_format: 'polyline6', steps: false, annotations: [], max_alternatives: 1 };
   const { result, response } = await routeCore({ locations, costing: body.costing || 'auto', options, optionWarnings: [] });
   if (!result.ok) return res.status(result.status).json(withRequestId(res, result.body));
-  return res.json({ haversine_distance_m: haversineMeters(body.from, body.to), route_distance_m: metersFromValhallaLength(response.distance, response.units), duration_s: response.duration, engine: response.engine, area: response.area, warnings: [] });
+  return res.json({ haversine_distance_m: haversineMeters(body.from, body.to), route_distance_m: metersFromValhallaLength(response.distance, response.units), duration_s: response.duration, engine: response.engine, area: response.area, graph_version: graphVersion(), warnings: [] });
 });
 
 app.post('/api/routing/optimization', async (req, res) => {
   const body = req.body || {};
   const jobs = body.jobs || [];
   if (!Array.isArray(jobs) || jobs.length < 1 || jobs.length > MAX_OPTIMIZATION_JOBS) return sendError(res, 400, 'invalid_request', `jobs must include 1 to ${MAX_OPTIMIZATION_JOBS} items`);
+  if (jobs.some((job) => job.service_seconds != null && (!Number.isFinite(Number(job.service_seconds)) || Number(job.service_seconds) < 0))) {
+    return sendError(res, 400, 'invalid_service_seconds', 'service_seconds must be a non-negative number');
+  }
   metrics.optimizationJobs += jobs.length;
   const points = [body.start, ...jobs.map((job) => ({ lat: job.lat, lon: job.lon })), body.end || body.start];
   const validationError = validateLocations(points, { min: 3, max: MAX_OPTIMIZATION_JOBS + 2 }) || validateEnum(body.costing || 'auto', COSTING, 'costing') || validateEnum(body.engine || 'auto', ENGINES, 'engine') || validateArea(body.area || null);
@@ -780,7 +1214,7 @@ app.post('/api/routing/optimization', async (req, res) => {
   const { result, response } = await routeCore({ locations: routeLocations, costing: body.costing || 'auto', options, optionWarnings: ['Optimization uses nearest-neighbor baseline; OR-Tools is not installed in this routing API image.'] });
   if (!result.ok) return res.status(result.status).json(withRequestId(res, result.body));
   const serviceSeconds = orderedJobs.reduce((sum, job) => sum + Number(job.service_seconds || 0), 0);
-  return res.json({ ordered_jobs: orderedJobs, route: response, total_distance_m: metersFromValhallaLength(response.distance, response.units), total_duration_s: (response.duration || 0) + serviceSeconds, optimizer: 'nearest_neighbor', optimal: false, engine: response.engine, area: response.area, warnings: ['This is a heuristic route, not guaranteed optimal'] });
+  return res.json({ ordered_jobs: orderedJobs, route: response, total_distance_m: metersFromValhallaLength(response.distance, response.units), total_duration_s: (response.duration || 0) + serviceSeconds, optimizer: 'nearest_neighbor', optimal: false, engine: response.engine, area: response.area, graph_version: graphVersion(), warnings: ['This is a heuristic route, not guaranteed optimal'] });
 });
 
 function nearestNeighborOrder(start, jobs) {
@@ -805,16 +1239,19 @@ async function listBuilds() {
 }
 
 app.get('/api/routing/builds', requireInternal, async (_req, res) => res.json({ builds: await listBuilds() }));
-app.get('/api/routing/builds/current', requireInternal, async (_req, res) => res.json({ metadata: await readMetadata(ACTIVE_METADATA_PATH) }));
-app.post('/api/routing/builds/:buildId/activate', requireInternal, async (req, res) => res.status(202).json({ status: 'manual_action_required', build_id: req.params.buildId, command: `./scripts/switch-active-valhalla.sh ${req.params.buildId}` }));
-app.post('/api/routing/reload', requireInternal, (_req, res) => res.status(202).json({ status: 'manual_action_required', command: 'docker compose restart valhalla routing-api' }));
+app.get('/api/routing/builds/current', requireInternal, async (_req, res) => res.json({ active_version: activeVersion, manifest: await readMetadata(join(activeGraphPath(), 'manifest.json')) }));
+app.post('/api/routing/builds/:buildId/activate', requireInternal, async (req, res) => {
+  if (!isSafeBuildId(req.params.buildId)) return sendError(res, 400, 'invalid_build_id', 'buildId contains unsupported characters');
+  return res.status(202).json({ status: 'manual_action_required', build_id: req.params.buildId, command: `./scripts/switch-active-valhalla.sh ${req.params.buildId}` });
+});
+app.post('/api/routing/reload', requireInternal, (_req, res) => res.status(202).json({ status: 'manual_action_required', command: 'docker compose restart routing-api' }));
 
 app.use((_req, res) => sendError(res, 404, 'not_found', 'Not found'));
 
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
     console.log(`routing-api listening on ${PORT}`);
-    console.log(`regional Valhalla: ${REGIONAL_URL}`);
+    console.log(`regional Valhalla: ${regionalUrl()}`);
     console.log(`world Valhalla: ${WORLD_URL || 'not configured'}`);
   });
 }

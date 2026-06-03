@@ -1,0 +1,14 @@
+{
+  "max_route_locations": 20,
+  "max_matrix_sources": 25,
+  "max_matrix_targets": 25,
+  "max_matrix_cells": 625,
+  "max_snap_locations": 100,
+  "default_snap_radius_meters": 50,
+  "max_snap_radius_meters": 200,
+  "max_map_match_points": 500,
+  "max_optimization_jobs": 18,
+  "max_isochrone_locations": 1,
+  "max_isochrone_contours": 4,
+  "max_alternatives": 2
+}
